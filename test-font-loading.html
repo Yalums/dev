@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>ARUDJingxihei 字体加载测试</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      max-width: 800px;
+      margin: 0 auto;
+    }
+    .test-section {
+      margin: 20px 0;
+      padding: 15px;
+      border: 1px solid #ddd;
+      border-radius: 5px;
+    }
+    .status {
+      padding: 5px 10px;
+      border-radius: 3px;
+      display: inline-block;
+      margin: 5px 0;
+    }
+    .success { background: #d4edda; color: #155724; }
+    .error { background: #f8d7da; color: #721c24; }
+    .info { background: #d1ecf1; color: #0c5460; }
+    pre {
+      background: #f5f5f5;
+      padding: 10px;
+      border-radius: 3px;
+      overflow-x: auto;
+    }
+  </style>
+</head>
+<body>
+  <h1>ARUDJingxihei 字体加载测试</h1>
+
+  <div class="test-section">
+    <h2>测试信息</h2>
+    <div id="test-info"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>字体文件验证</h2>
+    <div id="font-check"></div>
+  </div>
+
+  <div class="test-section">
+    <h2>控制台日志</h2>
+    <pre id="console-log"></pre>
+  </div>
+
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script type="module">
+    const log = [];
+    const originalConsoleLog = console.log;
+    const originalConsoleWarn = console.warn;
+    const originalConsoleError = console.error;
+
+    function addLog(type, ...args) {
+      const msg = args.map(a => typeof a === 'object' ? JSON.stringify(a, null, 2) : String(a)).join(' ');
+      log.push(`[${type}] ${msg}`);
+      document.getElementById('console-log').textContent = log.join('\n');
+    }
+
+    console.log = (...args) => { addLog('LOG', ...args); originalConsoleLog(...args); };
+    console.warn = (...args) => { addLog('WARN', ...args); originalConsoleWarn(...args); };
+    console.error = (...args) => { addLog('ERROR', ...args); originalConsoleError(...args); };
+
+    const infoDiv = document.getElementById('test-info');
+    const fontCheckDiv = document.getElementById('font-check');
+
+    infoDiv.innerHTML = `
+      <div class="status info">测试时间: ${new Date().toLocaleString()}</div>
+      <div class="status info">浏览器: ${navigator.userAgent}</div>
+    `;
+
+    // 测试字体文件是否存在
+    const fonts = [
+      { name: 'ARUDJingxihei-Regular', path: '/fonts/ARUDJingxihei-Regular.ttf' },
+      { name: 'ARUDJingxihei-Bold', path: '/fonts/ARUDJingxihei-Bold.ttf' },
+      { name: 'ARUDJingxihei-Light', path: '/fonts/ARUDJingxihei-Light.ttf' }
+    ];
+
+    async function checkFont(font) {
+      try {
+        console.log(`正在检查字体: ${font.path}`);
+        const response = await fetch(font.path + '?v=' + Date.now(), {
+          method: 'HEAD',
+          cache: 'no-store'
+        });
+
+        const contentType = response.headers.get('content-type');
+        const contentLength = response.headers.get('content-length');
+
+        if (!response.ok) {
+          return {
+            ...font,
+            status: 'error',
+            message: `HTTP ${response.status}: ${response.statusText}`
+          };
+        }
+
+        if (contentType && contentType.includes('text/html')) {
+          return {
+            ...font,
+            status: 'error',
+            message: '返回了HTML页面（404错误）'
+          };
+        }
+
+        const sizeKB = (parseInt(contentLength) / 1024).toFixed(2);
+        const sizeMB = (parseInt(contentLength) / 1024 / 1024).toFixed(2);
+
+        if (parseInt(contentLength) < 500 * 1024) {
+          return {
+            ...font,
+            status: 'error',
+            message: `文件太小 (${sizeKB} KB)，可能不是有效字体`
+          };
+        }
+
+        console.log(`✓ ${font.name}: ${sizeMB} MB`);
+        return {
+          ...font,
+          status: 'success',
+          message: `${sizeMB} MB (${sizeKB} KB)`,
+          contentType
+        };
+      } catch (error) {
+        console.error(`✗ ${font.name}: ${error.message}`);
+        return {
+          ...font,
+          status: 'error',
+          message: error.message
+        };
+      }
+    }
+
+    async function runTests() {
+      const results = await Promise.all(fonts.map(checkFont));
+
+      fontCheckDiv.innerHTML = results.map(r => `
+        <div class="status ${r.status}">
+          <strong>${r.name}</strong><br>
+          路径: ${r.path}<br>
+          状态: ${r.status === 'success' ? '✅ 可用' : '❌ 不可用'}<br>
+          ${r.message}<br>
+          ${r.contentType ? `Content-Type: ${r.contentType}` : ''}
+        </div>
+      `).join('');
+
+      const allSuccess = results.every(r => r.status === 'success');
+
+      if (allSuccess) {
+        fontCheckDiv.innerHTML += `
+          <div class="status success">
+            <strong>✅ 所有字体文件验证通过！</strong><br>
+            可以正常使用 PDF 导出功能
+          </div>
+        `;
+      } else {
+        fontCheckDiv.innerHTML += `
+          <div class="status error">
+            <strong>❌ 部分字体文件验证失败</strong><br>
+            PDF 导出可能无法正常使用粗体渲染
+          </div>
+        `;
+      }
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
