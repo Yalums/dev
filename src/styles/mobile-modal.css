@@ -7,32 +7,29 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: rgba(0, 0, 0, 0.8);
+  background: var(--bg-secondary);
   z-index: 9999;
   display: flex;
-  align-items: flex-end;
-  justify-content: center;
+  flex-direction: column;
   padding: 0;
   overflow: hidden;
-  -webkit-overflow-scrolling: touch;
+  /* 移除遮罩背景，让modal占据全屏 */
 }
 
 [data-theme="light"] .mobile-message-detail-modal {
-  background: rgba(0, 0, 0, 0.5);
+  background: var(--bg-secondary);
 }
 
 .mobile-detail-content {
   background: var(--bg-secondary);
-  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  border-radius: 0;
   width: 100%;
-  max-width: 100%;
-  height: 90vh;
-  max-height: 90vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
-  /* 移除动画效果 - 按用户要求去掉动画 */
+  /* 修复：让modal可以全屏显示 */
 }
 
 .mobile-detail-header {
@@ -44,6 +41,16 @@
   background: var(--bg-tertiary);
   flex-shrink: 0;
   gap: 12px;
+  /* 添加：支持向下滚动时隐藏 */
+  position: sticky;
+  top: 0;
+  z-index: 100;
+  transition: transform 0.3s ease-out;
+}
+
+/* 向下滚动时隐藏header */
+.mobile-detail-header.hidden {
+  transform: translateY(-100%);
 }
 
 .mobile-header-left,
@@ -177,27 +184,23 @@
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   background: var(--bg-primary);
-  /* 修复：添加相对定位，为固定按钮提供定位上下文 */
+  /* 修复：使用单一滚动容器 */
   position: relative;
-  display: flex;
-  flex-direction: column;
+  display: block;
+  padding-bottom: 68px; /* 为底部固定按钮预留空间 */
 }
 
 .mobile-detail-body .message-detail-container {
-  /* 修复：让容器占满剩余空间，为固定按钮留出空间 */
-  flex: 1;
-  display: flex;
-  flex-direction: column;
+  /* 修复：不使用flex布局，避免多层嵌套 */
   background: var(--bg-secondary);
   border-radius: 0;
+  min-height: 100%;
 }
 
 .mobile-detail-body .detail-content {
   padding: 0;
-  /* 修复：让内容区域可滚动，并为底部按钮预留空间 */
-  flex: 1;
-  overflow-y: auto;
-  margin-bottom: 68px; /* 为固定在底部的按钮预留空间 */
+  /* 修复：移除overflow，让父容器统一处理滚动 */
+  /* 不需要margin-bottom，已在父容器设置padding-bottom */
 }
 
 .mobile-detail-body .tab-content {

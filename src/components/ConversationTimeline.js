@@ -404,18 +404,23 @@ const ConversationTimeline = ({
   const [copiedMessageIndex, setCopiedMessageIndex] = useState(null);
   const [sortingEnabled, setSortingEnabled] = useState(false);
   const [showMobileDetail, setShowMobileDetail] = useState(false); // 新增:移动端详情显示状态
-  
+
   // 重命名相关状态
   const [showRenameDialog, setShowRenameDialog] = useState(false);
   const [renameManager] = useState(() => getRenameManager());
   const [customName, setCustomName] = useState('');
-  
+
   // 滚动相关状态
   const [isHeaderHidden, setIsHeaderHidden] = useState(false);
   const [lastScrollY, setLastScrollY] = useState(0);
   const [scrollDirection, setScrollDirection] = useState('up');
   const [forceUpdateCounter, setForceUpdateCounter] = useState(0); // 用于强制更新
   const leftPanelRef = React.useRef(null);
+
+  // 移动端modal滚动相关状态
+  const [isMobileHeaderHidden, setIsMobileHeaderHidden] = useState(false);
+  const [mobileLastScrollY, setMobileLastScrollY] = useState(0);
+  const mobileDetailBodyRef = useRef(null);
   
   // 消息定位相关
   const messageRefs = useRef({});
@@ -1019,22 +1024,22 @@ const ConversationTimeline = ({
   // 滚动监听器 - 智能顶栏隐藏/显示
   useEffect(() => {
     if (!isDesktop || !leftPanelRef.current) return;
-    
+
     const leftPanel = leftPanelRef.current;
     let ticking = false;
     const SCROLL_THRESHOLD = 10; // 最小滚动距离
     const HIDE_THRESHOLD = 100; // 开始隐藏的滚动距离
-    
+
     const handleScroll = () => {
       if (!ticking) {
         requestAnimationFrame(() => {
           const currentScrollY = leftPanel.scrollTop;
           const deltaY = currentScrollY - lastScrollY;
-          
+
           // 检测滚动方向
           if (Math.abs(deltaY) > SCROLL_THRESHOLD) {
             const newDirection = deltaY > 0 ? 'down' : 'up';
-            
+
             // 向下滚动且超过阈值时隐藏顶栏
             if (newDirection === 'down' && currentScrollY > HIDE_THRESHOLD && !isHeaderHidden) {
               setIsHeaderHidden(true);
@@ -1045,22 +1050,66 @@ const ConversationTimeline = ({
               setIsHeaderHidden(false);
               setScrollDirection('up');
             }
-            
+
             setLastScrollY(currentScrollY);
           }
-          
+
           ticking = false;
         });
         ticking = true;
       }
     };
-    
+
     leftPanel.addEventListener('scroll', handleScroll, { passive: true });
-    
+
     return () => {
       leftPanel.removeEventListener('scroll', handleScroll);
     };
   }, [isDesktop, lastScrollY, isHeaderHidden]);
+
+  // 移动端modal滚动监听器 - 智能顶栏隐藏/显示
+  useEffect(() => {
+    if (isDesktop || !showMobileDetail || !mobileDetailBodyRef.current) return;
+
+    const mobileDetailBody = mobileDetailBodyRef.current;
+    let ticking = false;
+    const SCROLL_THRESHOLD = 5; // 移动端使用更小的阈值
+    const HIDE_THRESHOLD = 50; // 移动端使用更小的隐藏阈值
+
+    const handleMobileScroll = () => {
+      if (!ticking) {
+        requestAnimationFrame(() => {
+          const currentScrollY = mobileDetailBody.scrollTop;
+          const deltaY = currentScrollY - mobileLastScrollY;
+
+          // 检测滚动方向
+          if (Math.abs(deltaY) > SCROLL_THRESHOLD) {
+            const newDirection = deltaY > 0 ? 'down' : 'up';
+
+            // 向下滚动且超过阈值时隐藏header
+            if (newDirection === 'down' && currentScrollY > HIDE_THRESHOLD && !isMobileHeaderHidden) {
+              setIsMobileHeaderHidden(true);
+            }
+            // 向上滚动或滚动到顶部时显示header
+            else if ((newDirection === 'up' || currentScrollY <= HIDE_THRESHOLD) && isMobileHeaderHidden) {
+              setIsMobileHeaderHidden(false);
+            }
+
+            setMobileLastScrollY(currentScrollY);
+          }
+
+          ticking = false;
+        });
+        ticking = true;
+      }
+    };
+
+    mobileDetailBody.addEventListener('scroll', handleMobileScroll, { passive: true });
+
+    return () => {
+      mobileDetailBody.removeEventListener('scroll', handleMobileScroll);
+    };
+  }, [isDesktop, showMobileDetail, mobileLastScrollY, isMobileHeaderHidden]);
   
   // 重置滚动状态 - 当数据改变时
   useEffect(() => {
@@ -1071,6 +1120,15 @@ const ConversationTimeline = ({
       leftPanelRef.current.scrollTop = 0;
     }
   }, [conversation?.uuid, messages.length]);
+
+  // 重置移动端modal滚动状态 - 当modal打开/关闭或消息改变时
+  useEffect(() => {
+    setIsMobileHeaderHidden(false);
+    setMobileLastScrollY(0);
+    if (mobileDetailBodyRef.current) {
+      mobileDetailBodyRef.current.scrollTop = 0;
+    }
+  }, [showMobileDetail, selectedMessageIndex]);
   
   const handleMessageSelect = (messageIndex) => {
     setSelectedMessageIndex(messageIndex);
@@ -1886,7 +1944,7 @@ const ConversationTimeline = ({
         return (
           <div className="mobile-message-detail-modal" onClick={handleCloseMobileDetail}>
             <div className="mobile-detail-content" onClick={(e) => e.stopPropagation()}>
-              <div className="mobile-detail-header">
+              <div className={`mobile-detail-header ${isMobileHeaderHidden ? 'hidden' : ''}`}>
                 {/* 左侧:消息序号和导航按钮 */}
                 <div className="mobile-header-left">
                   {/* 新增:消息序号显示 */}
@@ -1943,8 +2001,8 @@ const ConversationTimeline = ({
                   </button>
                 </div>
               </div>
-              
-              <div className="mobile-detail-body">
+
+              <div className="mobile-detail-body" ref={mobileDetailBodyRef}>
                 <MessageDetailPanel
                   data={data}
                   selectedMessageIndex={selectedMessageIndex}
