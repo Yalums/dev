@@ -57,9 +57,70 @@ export class PDFExportManager {
     this.config = {};
     this.useChineseFont = false; // 是否成功加载了中文字体
     this.chineseFontName = 'helvetica'; // 当前使用的字体名称
+    this.availableFontWeights = []; // 可用的字体变体 (normal, bold, light 等)
     this.meta = null; // 保存元数据用于页脚
     this.exportDate = null; // 导出时间
     this.messageAnchors = []; // 保存每条消息的位置信息用于目录链接和书签
+  }
+
+  /**
+   * 安全地设置字体，如果字体变体不可用则自动回退
+   * @param {string} fontName - 字体名称
+   * @param {string} fontStyle - 字体样式 (normal, bold, light, italic, bolditalic)
+   * @returns {boolean} - 是否成功设置
+   */
+  safeSetFont(fontName, fontStyle = 'normal') {
+    try {
+      // 如果请求的样式可用，直接使用
+      if (this.availableFontWeights.includes(fontStyle)) {
+        this.pdf.setFont(fontName, fontStyle);
+        return true;
+      }
+
+      // 字体变体不可用，进行智能回退
+      console.warn(`[PDF导出] 字体变体 ${fontStyle} 不可用，尝试回退...`);
+
+      // 回退策略
+      if (fontStyle === 'bold' || fontStyle === 'bolditalic') {
+        // 粗体：优先尝试 normal，如果没有则用第一个可用的
+        if (this.availableFontWeights.includes('normal')) {
+          this.pdf.setFont(fontName, 'normal');
+          console.log(`[PDF导出] ✓ 回退到 normal 字体`);
+          return false; // 返回 false 表示使用了回退
+        }
+      }
+
+      if (fontStyle === 'italic' || fontStyle === 'bolditalic') {
+        // 斜体：中文字体通常没有斜体，回退到 light 或 normal
+        if (this.availableFontWeights.includes('light')) {
+          this.pdf.setFont(fontName, 'light');
+          console.log(`[PDF导出] ✓ 斜体回退到 light 字体`);
+          return false;
+        } else if (this.availableFontWeights.includes('normal')) {
+          this.pdf.setFont(fontName, 'normal');
+          console.log(`[PDF导出] ✓ 斜体回退到 normal 字体`);
+          return false;
+        }
+      }
+
+      // 默认回退：使用第一个可用的字体变体
+      if (this.availableFontWeights.length > 0) {
+        const fallbackStyle = this.availableFontWeights[0];
+        this.pdf.setFont(fontName, fallbackStyle);
+        console.log(`[PDF导出] ✓ 回退到 ${fallbackStyle} 字体`);
+        return false;
+      }
+
+      // 最终回退：使用 normal
+      this.pdf.setFont(fontName, 'normal');
+      console.log(`[PDF导出] ✓ 回退到 normal 字体`);
+      return false;
+    } catch (error) {
+      console.error(`[PDF导出] 设置字体失败:`, error);
+      // 最后的保险：使用默认字体
+      this.pdf.setFont(fontName || this.chineseFontName);
+      return false;
+    }
   }
 
   /**
@@ -136,16 +197,19 @@ export class PDFExportManager {
       const fontLoadResult = await addChineseFontSupport(this.pdf);
       this.useChineseFont = fontLoadResult.success;
       this.chineseFontName = fontLoadResult.fontName;
+      this.availableFontWeights = fontLoadResult.availableWeights || [];
 
       if (!this.useChineseFont) {
         console.warn('[PDF导出] 中文字体加载失败，将使用默认字体（中文可能显示为方框）');
       } else {
         console.log(`[PDF导出] 中文字体加载成功: ${this.chineseFontName}`);
+        console.log(`[PDF导出] 可用字体变体: ${this.availableFontWeights.join(', ')}`);
       }
     } catch (error) {
       console.error('[PDF导出] 字体加载异常:', error);
       this.useChineseFont = false;
       this.chineseFontName = 'helvetica';
+      this.availableFontWeights = [];
     }
 
     // 无论字体是否加载成功，都设置一个默认字体
@@ -1350,7 +1414,8 @@ export class PDFExportManager {
     const oldFontSize = this.pdf.internal.getFontSize();
 
     this.pdf.setFontSize(fontSize);
-    this.pdf.setFont(this.chineseFontName, 'bold');
+    // 使用粗体字体（如果可用）
+    this.safeSetFont(this.chineseFontName, 'bold');
 
     try {
       const lines = this.pdf.splitTextToSize(text, maxWidth);
@@ -1370,7 +1435,7 @@ export class PDFExportManager {
 
     // 恢复字体
     this.pdf.setFontSize(oldFontSize);
-    this.pdf.setFont(this.chineseFontName, 'normal');
+    this.safeSetFont(this.chineseFontName, 'normal');
 
     this.currentY += PDF_STYLES.LINE_HEIGHT * 0.5; // 标题后额外间距
   }
@@ -1666,13 +1731,26 @@ export class PDFExportManager {
 
     switch (type) {
       case 'bold':
-        this.pdf.setFont(this.chineseFontName, 'bold');
+        // 使用粗体字体（如果可用，否则自动回退）
+        this.safeSetFont(this.chineseFontName, 'bold');
         break;
       case 'italic':
-        this.pdf.setFont(this.chineseFontName, 'italic');
+        // 使用斜体字体（如果可用，否则回退到 light 或 normal）
+        // 同时设置颜色以区分
+        const italicSuccess = this.safeSetFont(this.chineseFontName, 'italic');
+        if (!italicSuccess) {
+          // 如果没有斜体，用颜色区分
+          this.pdf.setTextColor(70, 130, 180); // 蓝色表示强调
+        }
         break;
       case 'bold-italic':
-        this.pdf.setFont(this.chineseFontName, 'bolditalic');
+        // 粗斜体：尝试使用 bold，如果没有则用 normal + 颜色
+        const boldItalicSuccess = this.safeSetFont(this.chineseFontName, 'bolditalic');
+        if (!boldItalicSuccess) {
+          // 回退：使用 bold（如果有）+ 颜色
+          this.safeSetFont(this.chineseFontName, 'bold');
+          this.pdf.setTextColor(70, 130, 180); // 蓝色表示斜体
+        }
         break;
       case 'code':
         this.pdf.setFont('courier', 'normal');
@@ -1680,11 +1758,11 @@ export class PDFExportManager {
         this.pdf.setTextColor(220, 50, 50);
         break;
       case 'link':
-        this.pdf.setFont(this.chineseFontName, 'normal');
+        this.safeSetFont(this.chineseFontName, 'normal');
         this.pdf.setTextColor(0, 102, 204); // 蓝色
         break;
       default:
-        this.pdf.setFont(this.chineseFontName, 'normal');
+        this.safeSetFont(this.chineseFontName, 'normal');
     }
   }
 
