@@ -530,25 +530,23 @@ export class PDFExportManager {
   }
 
   /**
-   * 渲染代码块（支持跨页）
+   * 渲染代码块（支持跨页）- 简化版，逐行渲染
    */
   renderCodeBlock(code, language = '') {
     this.checkPageBreak(PDF_STYLES.FONT_SIZE_CODE + PDF_STYLES.SECTION_SPACING * 2);
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
-    const lineNumberWidth = 8; // 行号区域宽度
-    const codeWidth = maxWidth - lineNumberWidth - 8; // 留出行号和padding
+    const lineNumberWidth = 8;
+    const codeWidth = maxWidth - lineNumberWidth - 8;
+    const padding = 3;
 
-    // 清理代码内容
     const cleanCode = this.cleanText(code);
     const cleanLanguage = this.cleanText(language);
 
-    // 渲染语言标签（在代码块外部上方）
+    // 渲染语言标签
     if (cleanLanguage) {
       this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
-      this.pdf.setTextColor(100, 100, 100); // 深灰色
-
-      // 添加语言标签背景
+      this.pdf.setTextColor(100, 100, 100);
       const labelText = cleanLanguage.toUpperCase();
       const labelWidth = this.pdf.getTextWidth(labelText) + 4;
       this.pdf.setFillColor(220, 220, 220);
@@ -565,7 +563,7 @@ export class PDFExportManager {
       this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
     }
 
-    // 预处理代码行,进行自动换行
+    // 处理代码行
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
     this.pdf.setFont(this.chineseFontName);
     const codeLines = cleanCode.split('\n');
@@ -582,13 +580,12 @@ export class PDFExportManager {
         return;
       }
 
-      // 使用splitTextToSize自动换行
       try {
         const wrapped = this.pdf.splitTextToSize(cleanLine, codeWidth);
         wrapped.forEach((wLine, idx) => {
           wrappedLines.push({
             text: wLine,
-            lineNumber: idx === 0 ? wrappedLines.length + 1 : null // 只在第一行显示行号
+            lineNumber: idx === 0 ? wrappedLines.length + 1 : null
           });
         });
       } catch (error) {
@@ -596,95 +593,146 @@ export class PDFExportManager {
       }
     });
 
-    // 按页分组行（检测哪些行在同一页）
-    const lineGroups = this.groupCodeLinesByPage(wrappedLines);
+    // 逐行渲染，遇到需要换页时自动换页
+    const blockStartY = this.currentY;
+    const blockStartPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
+    let isFirstLine = true;
 
-    // 为每组渲染背景、边框和内容
-    lineGroups.forEach((group, groupIndex) => {
-      const isFirstGroup = groupIndex === 0;
-      const isLastGroup = groupIndex === lineGroups.length - 1;
-      const paddingTop = isFirstGroup ? 3 : 0;
-      const paddingBottom = isLastGroup ? 3 : 0;
+    // 先绘制第一页的背景和边框起始部分
+    const firstPageHeight = Math.min(
+      wrappedLines.length * PDF_STYLES.LINE_HEIGHT + padding * 2,
+      PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
+    );
+    this.pdf.setFillColor(248, 248, 248);
+    this.pdf.rect(
+      PDF_STYLES.MARGIN_LEFT,
+      blockStartY - padding,
+      maxWidth,
+      firstPageHeight,
+      'F'
+    );
 
-      const groupHeight = PDF_STYLES.LINE_HEIGHT * group.lines.length + paddingTop + paddingBottom;
-      const startY = group.startY - paddingTop;
+    this.currentY = blockStartY;
 
-      // 绘制代码块背景
-      this.pdf.setPage(group.page);
-      this.pdf.setFillColor(248, 248, 248);
-      if (isFirstGroup && isLastGroup) {
-        // 完整的圆角矩形
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 1.5, 1.5, 'F');
-      } else if (isFirstGroup) {
-        // 顶部圆角
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, 4, 1.5, 1.5, 'F');
-      } else if (isLastGroup) {
-        // 底部圆角
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY + groupHeight - 4, maxWidth, 4, 1.5, 1.5, 'F');
-      } else {
-        // 中间部分无圆角
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
+    wrappedLines.forEach(({ text, lineNumber }, index) => {
+      // 检查是否需要换页
+      if (this.currentY + PDF_STYLES.FONT_SIZE_CODE > PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM) {
+        // 先绘制当前页的代码块底部边框
+        this.pdf.setDrawColor(200, 200, 200);
+        this.pdf.setLineWidth(0.3);
+        const currentPageBottom = this.currentY;
+        this.pdf.line(
+          PDF_STYLES.MARGIN_LEFT,
+          blockStartY - padding,
+          PDF_STYLES.MARGIN_LEFT,
+          currentPageBottom
+        );
+        this.pdf.line(
+          PDF_STYLES.MARGIN_LEFT + maxWidth,
+          blockStartY - padding,
+          PDF_STYLES.MARGIN_LEFT + maxWidth,
+          currentPageBottom
+        );
+
+        // 换页
+        this.pdf.addPage();
+        this.currentY = PDF_STYLES.MARGIN_TOP;
+        
+        // 在新页绘制代码块背景（连续样式）
+        const remainingLines = wrappedLines.length - index;
+        const newPageHeight = Math.min(
+          remainingLines * PDF_STYLES.LINE_HEIGHT + padding,
+          PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
+        );
+        this.pdf.setFillColor(248, 248, 248);
+        this.pdf.rect(
+          PDF_STYLES.MARGIN_LEFT,
+          this.currentY - padding,
+          maxWidth,
+          newPageHeight,
+          'F'
+        );
+        
+        isFirstLine = false;
       }
 
+      // 渲染行号
+      if (lineNumber !== null) {
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE - 1);
+        this.pdf.setTextColor(150, 150, 150);
+        const lineNumStr = String(lineNumber).padStart(3, ' ');
+        this.pdf.text(lineNumStr, PDF_STYLES.MARGIN_LEFT + 1, this.currentY);
+      }
+
+      // 渲染代码文本
+      this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
+      this.pdf.setTextColor(50, 50, 50);
+      const safeLine = this.cleanText(text);
+      if (safeLine !== null && safeLine !== undefined) {
+        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + lineNumberWidth + 2, this.currentY);
+      }
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    });
+
+    // 绘制最后的边框和行号分隔线
+    const endPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
+    
+    // 如果跨页，需要在每一页绘制边框
+    for (let page = blockStartPage; page <= endPage; page++) {
+      this.pdf.setPage(page);
+      const isFirst = (page === blockStartPage);
+      const isLast = (page === endPage);
+      
+      let boxStartY, boxEndY;
+      if (isFirst && isLast) {
+        // 单页代码块
+        boxStartY = blockStartY - padding;
+        boxEndY = this.currentY + padding;
+      } else if (isFirst) {
+        // 第一页
+        boxStartY = blockStartY - padding;
+        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
+      } else if (isLast) {
+        // 最后一页
+        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
+        boxEndY = this.currentY + padding;
+      } else {
+        // 中间页
+        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
+        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
+      }
+      
       // 绘制边框
       this.pdf.setDrawColor(200, 200, 200);
       this.pdf.setLineWidth(0.3);
-      if (isFirstGroup && isLastGroup) {
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 1.5, 1.5, 'S');
+      if (isFirst && isLast) {
+        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, boxStartY, maxWidth, boxEndY - boxStartY, 1.5, 1.5, 'S');
       } else {
-        // 绘制侧边和顶部/底部边框
-        if (isFirstGroup) {
-          // 顶部和侧边
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY + groupHeight, PDF_STYLES.MARGIN_LEFT, startY);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-        } else if (isLastGroup) {
-          // 底部和侧边
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY + groupHeight, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-        } else {
-          // 只有侧边
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
+        this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT, boxEndY);
+        this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
+        if (isFirst) {
+          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY);
+        }
+        if (isLast) {
+          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxEndY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
         }
       }
-
+      
       // 绘制行号分隔线
       this.pdf.setDrawColor(220, 220, 220);
       this.pdf.setLineWidth(0.2);
       this.pdf.line(
         PDF_STYLES.MARGIN_LEFT + lineNumberWidth,
-        startY,
+        boxStartY,
         PDF_STYLES.MARGIN_LEFT + lineNumberWidth,
-        startY + groupHeight
+        boxEndY
       );
+    }
 
-      // 渲染代码内容
-      this.currentY = group.startY;
-      group.lines.forEach(({ text, lineNumber }) => {
-        // 渲染行号
-        if (lineNumber !== null) {
-          this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE - 1);
-          this.pdf.setTextColor(150, 150, 150);
-          const lineNumStr = String(lineNumber).padStart(3, ' ');
-          this.pdf.text(lineNumStr, PDF_STYLES.MARGIN_LEFT + 1, this.currentY);
-        }
-
-        // 渲染代码文本
-        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
-        this.pdf.setTextColor(50, 50, 50);
-        const safeLine = this.cleanText(text);
-        if (safeLine !== null && safeLine !== undefined) {
-          this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + lineNumberWidth + 2, this.currentY);
-        }
-        this.currentY += PDF_STYLES.LINE_HEIGHT;
-      });
-    });
-
-    // 恢复默认字体和颜色
+    // 确保回到最后一页
+    this.pdf.setPage(endPage);
+    
+    // 恢复默认样式
     this.pdf.setFont(this.chineseFontName);
     this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
     this.currentY += PDF_STYLES.SECTION_SPACING;
@@ -730,19 +778,19 @@ export class PDFExportManager {
   }
 
   /**
-   * 渲染块级LaTeX公式（支持跨页）
+   * 渲染块级LaTeX公式（支持跨页）- 简化版
    * @param {string} latex - LaTeX公式内容
    */
   renderLatexBlock(latex) {
     this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY + PDF_STYLES.SECTION_SPACING * 2);
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
+    const padding = 3;
     const cleanLatex = this.cleanText(latex);
 
     // 渲染"Math"标签
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
-    this.pdf.setTextColor(70, 130, 180); // 蓝色
-
+    this.pdf.setTextColor(70, 130, 180);
     const labelText = 'MATH';
     const labelWidth = this.pdf.getTextWidth(labelText) + 4;
     this.pdf.setFillColor(230, 240, 250);
@@ -758,7 +806,7 @@ export class PDFExportManager {
     this.pdf.text(labelText, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
     this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
 
-    // 处理公式文本换行
+    // 处理公式文本
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
     this.pdf.setFont(this.chineseFontName);
 
@@ -769,65 +817,100 @@ export class PDFExportManager {
       formulaLines = cleanLatex.split('\n');
     }
 
-    // 按页分组行
-    const lineGroups = this.groupLatexLinesByPage(formulaLines);
+    // 逐行渲染
+    const blockStartY = this.currentY;
+    const blockStartPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
 
-    // 为每组渲染背景、边框和内容
-    lineGroups.forEach((group, groupIndex) => {
-      const isFirstGroup = groupIndex === 0;
-      const isLastGroup = groupIndex === lineGroups.length - 1;
-      const paddingTop = isFirstGroup ? 3 : 0;
-      const paddingBottom = isLastGroup ? 3 : 0;
+    // 绘制第一页的背景
+    const firstPageHeight = Math.min(
+      formulaLines.length * PDF_STYLES.LINE_HEIGHT + padding * 2,
+      PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
+    );
+    this.pdf.setFillColor(245, 250, 255);
+    this.pdf.rect(
+      PDF_STYLES.MARGIN_LEFT,
+      blockStartY - padding,
+      maxWidth,
+      firstPageHeight,
+      'F'
+    );
 
-      const groupHeight = PDF_STYLES.LINE_HEIGHT * group.lines.length + paddingTop + paddingBottom;
-      const startY = group.startY - paddingTop;
+    this.currentY = blockStartY;
 
-      // 绘制公式背景（浅蓝色）
-      this.pdf.setPage(group.page);
-      this.pdf.setFillColor(245, 250, 255);
-      if (isFirstGroup && isLastGroup) {
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 1.5, 1.5, 'F');
-      } else if (isFirstGroup) {
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, 4, 1.5, 1.5, 'F');
-      } else if (isLastGroup) {
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY + groupHeight - 4, maxWidth, 4, 1.5, 1.5, 'F');
+    formulaLines.forEach((line, index) => {
+      // 检查是否需要换页
+      if (this.currentY + PDF_STYLES.FONT_SIZE_BODY > PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM) {
+        // 换页
+        this.pdf.addPage();
+        this.currentY = PDF_STYLES.MARGIN_TOP;
+
+        // 在新页绘制背景
+        const remainingLines = formulaLines.length - index;
+        const newPageHeight = Math.min(
+          remainingLines * PDF_STYLES.LINE_HEIGHT + padding,
+          PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
+        );
+        this.pdf.setFillColor(245, 250, 255);
+        this.pdf.rect(
+          PDF_STYLES.MARGIN_LEFT,
+          this.currentY - padding,
+          maxWidth,
+          newPageHeight,
+          'F'
+        );
+      }
+
+      // 渲染公式文本
+      this.pdf.setTextColor(30, 60, 120);
+      const safeLine = this.cleanText(line);
+      if (safeLine && safeLine.trim().length > 0) {
+        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + 4, this.currentY);
+      }
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    });
+
+    // 绘制边框
+    const endPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
+
+    for (let page = blockStartPage; page <= endPage; page++) {
+      this.pdf.setPage(page);
+      const isFirst = (page === blockStartPage);
+      const isLast = (page === endPage);
+
+      let boxStartY, boxEndY;
+      if (isFirst && isLast) {
+        boxStartY = blockStartY - padding;
+        boxEndY = this.currentY + padding;
+      } else if (isFirst) {
+        boxStartY = blockStartY - padding;
+        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
+      } else if (isLast) {
+        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
+        boxEndY = this.currentY + padding;
       } else {
-        this.pdf.rect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 'F');
+        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
+        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
       }
 
       // 绘制边框
       this.pdf.setDrawColor(180, 210, 240);
       this.pdf.setLineWidth(0.4);
-      if (isFirstGroup && isLastGroup) {
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, startY, maxWidth, groupHeight, 1.5, 1.5, 'S');
+      if (isFirst && isLast) {
+        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, boxStartY, maxWidth, boxEndY - boxStartY, 1.5, 1.5, 'S');
       } else {
-        if (isFirstGroup) {
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY + groupHeight, PDF_STYLES.MARGIN_LEFT, startY);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-        } else if (isLastGroup) {
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY + groupHeight, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
-        } else {
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, startY, PDF_STYLES.MARGIN_LEFT, startY + groupHeight);
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, startY, PDF_STYLES.MARGIN_LEFT + maxWidth, startY + groupHeight);
+        this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT, boxEndY);
+        this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
+        if (isFirst) {
+          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY);
+        }
+        if (isLast) {
+          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxEndY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
         }
       }
+    }
 
-      // 渲染公式内容
-      this.pdf.setTextColor(30, 60, 120); // 深蓝色
-      this.currentY = group.startY;
-      group.lines.forEach(line => {
-        const safeLine = this.cleanText(line);
-        if (safeLine && safeLine.trim().length > 0) {
-          this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + 4, this.currentY);
-        }
-        this.currentY += PDF_STYLES.LINE_HEIGHT;
-      });
-    });
+    // 确保回到最后一页
+    this.pdf.setPage(endPage);
 
     // 恢复默认样式
     this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
