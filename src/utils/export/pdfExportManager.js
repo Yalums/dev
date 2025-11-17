@@ -1,7 +1,8 @@
 // utils/export/pdfExportManager.js
 // PDF导出管理器 - 基于jsPDF实现纯文本PDF导出
 //
-// 使用 SarasaMonoSC-Regular.ttf 字体支持中文显示
+// 使用 ARUDJingxihei 字体家族支持中文显示（Regular、Bold、Light 三种字重）
+// 支持 Markdown 渲染（标题、粗体、斜体、列表、引用等）和 LaTeX 公式显示
 import { jsPDF } from 'jspdf';
 import { DateTimeUtils } from '../fileParser';
 import { addChineseFontSupport } from './pdfFontHelper';
