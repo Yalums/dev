@@ -7,29 +7,32 @@
   left: 0;
   right: 0;
   bottom: 0;
-  background: var(--bg-secondary);
+  background: rgba(0, 0, 0, 0.8);
   z-index: 9999;
   display: flex;
-  flex-direction: column;
+  align-items: flex-end;
+  justify-content: center;
   padding: 0;
   overflow: hidden;
-  /* 移除遮罩背景，让modal占据全屏 */
+  -webkit-overflow-scrolling: touch;
 }
 
 [data-theme="light"] .mobile-message-detail-modal {
-  background: var(--bg-secondary);
+  background: rgba(0, 0, 0, 0.5);
 }
 
 .mobile-detail-content {
   background: var(--bg-secondary);
-  border-radius: 0;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
   width: 100%;
-  height: 100vh;
-  max-height: 100vh;
+  max-width: 100%;
+  height: 90vh;
+  max-height: 90vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  /* 修复：让modal可以全屏显示 */
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.3);
+  position: relative; /* 为absolute定位的header提供定位上下文 */
 }
 
 .mobile-detail-header {
@@ -42,15 +45,17 @@
   flex-shrink: 0;
   gap: 12px;
   /* 添加：支持向下滚动时隐藏 */
-  position: sticky;
+  position: absolute;
   top: 0;
+  left: 0;
+  right: 0;
   z-index: 100;
-  transition: transform 0.3s ease-out;
+  transition: top 0.3s ease-out;
 }
 
-/* 向下滚动时隐藏header */
+/* 向下滚动时隐藏header - 向上移出视野 */
 .mobile-detail-header.hidden {
-  transform: translateY(-100%);
+  top: -60px; /* 完全移出视野 */
 }
 
 .mobile-header-left,
@@ -187,7 +192,14 @@
   /* 修复：使用单一滚动容器 */
   position: relative;
   display: block;
+  padding-top: 60px; /* 为absolute定位的header预留空间 */
   padding-bottom: 68px; /* 为底部固定按钮预留空间 */
+  transition: padding-top 0.3s ease-out;
+}
+
+/* 当header隐藏时，移除top padding让内容上移 */
+.mobile-detail-body.header-hidden {
+  padding-top: 0;
 }
 
 .mobile-detail-body .message-detail-container {

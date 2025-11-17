@@ -2002,7 +2002,7 @@ const ConversationTimeline = ({
                 </div>
               </div>
 
-              <div className="mobile-detail-body" ref={mobileDetailBodyRef}>
+              <div className={`mobile-detail-body ${isMobileHeaderHidden ? 'header-hidden' : ''}`} ref={mobileDetailBodyRef}>
                 <MessageDetailPanel
                   data={data}
                   selectedMessageIndex={selectedMessageIndex}
