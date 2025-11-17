@@ -1,9 +1,11 @@
 // utils/export/pdfFontHelper.js
-// PDF中文字体支持 - 使用 SarasaMonoSC-Regular.ttf
+// PDF中文字体支持 - 使用 ARUDJingxihei (阿如汉字黑体) 字体家族
 //
 // 当前实现：
-// - 使用 public/fonts/SarasaMonoSC-Regular.ttf (23MB)
-// - 注册为 'NotoSansSC' 名称以提高 jsPDF 兼容性
+// - 使用 public/fonts/ARUDJingxihei-Regular.ttf (正常字重)
+// - 使用 public/fonts/ARUDJingxihei-Bold.ttf (粗体字重)
+// - 使用 public/fonts/ARUDJingxihei-Light.ttf (细体字重)
+// - 支持多字重变体，可正确渲染粗体标题和强调文本
 // - 包含完整的验证流程（Content-Type、TTF魔数、cmap表）
 
 /**
@@ -49,9 +51,10 @@ function hasUnicodeCmap(arrayBuffer) {
  * @param {jsPDF} pdf - jsPDF实例
  * @param {string} fontPath - 字体文件路径 (相对于public目录)
  * @param {string} fontName - 字体名称
+ * @param {string} fontStyle - 字体样式 (normal, bold, light 等)
  * @returns {Promise<boolean>} - 是否成功加载字体
  */
-async function loadFontFromProject(pdf, fontPath, fontName = 'CustomFont') {
+async function loadFontFromProject(pdf, fontPath, fontName = 'CustomFont', fontStyle = 'normal') {
   try {
     console.log(`[PDF字体] 正在加载字体: ${fontPath}`);
     
@@ -133,11 +136,10 @@ async function loadFontFromProject(pdf, fontPath, fontName = 'CustomFont') {
       
       try {
         pdf.addFileToVFS(fileName, base64);
-        // 使用 normal 样式，这对大多数字体都有效
-        pdf.addFont(fileName, fontName, 'normal');
-        pdf.setFont(fontName);
-        
-        console.log(`[PDF字体] 字体加载成功: ${fontName}`);
+        // 添加字体时指定样式
+        pdf.addFont(fileName, fontName, fontStyle);
+
+        console.log(`[PDF字体] 字体加载成功: ${fontName}-${fontStyle}`);
         return true;
       } catch (addFontError) {
         console.error(`[PDF字体] addFont 失败:`, addFontError.message);
@@ -161,39 +163,79 @@ async function loadFontFromProject(pdf, fontPath, fontName = 'CustomFont') {
 }
 
 /**
- * 为PDF添加中文字体支持
- * 尝试加载项目中的中文字体，失败则使用默认字体
- * 
+ * 为PDF添加中文字体支持（多字重版本）
+ * 尝试加载项目中的中文字体，支持 Regular、Light、Bold 三个字重
+ *
  * @param {jsPDF} pdf - jsPDF实例
- * @returns {Promise<{success: boolean, fontName: string}>} - 加载结果和字体名称
+ * @returns {Promise<{success: boolean, fontName: string, availableWeights: string[]}>} - 加载结果和字体名称
  */
 export async function addChineseFontSupport(pdf) {
-  console.log('[PDF字体] 开始尝试加载中文字体...');
+  console.log('[PDF字体] 开始加载 ARUDJingxihei 字体家族...');
 
-  // 只使用实际存在的字体文件：SarasaMonoSC-Regular.ttf
+  // 定义字体配置 - 使用阿如汉字黑体
   const fontConfigs = [
-    { path: '/fonts/SarasaMonoSC-Regular.ttf', name: 'NotoSansSC' },
-    { path: '/fonts/SarasaMonoSC-Regular.ttf', name: 'SarasaMono' },
-    { path: process.env.PUBLIC_URL + '/fonts/SarasaMonoSC-Regular.ttf', name: 'NotoSansSC' },
+    {
+      path: '/fonts/ARUDJingxihei-Regular.ttf',
+      name: 'ARUDJingxihei',
+      style: 'normal',
+      weight: 400,
+      description: 'Regular (正常)'
+    },
+    {
+      path: '/fonts/ARUDJingxihei-Bold.ttf',
+      name: 'ARUDJingxihei',
+      style: 'bold',
+      weight: 700,
+      description: 'Bold (粗体)'
+    },
+    {
+      path: '/fonts/ARUDJingxihei-Light.ttf',
+      name: 'ARUDJingxihei',
+      style: 'light',
+      weight: 300,
+      description: 'Light (细体)'
+    },
   ];
+
+  let loadedCount = 0;
+  let fontName = 'helvetica';
+  const availableWeights = [];
 
   for (const config of fontConfigs) {
     try {
-      const success = await loadFontFromProject(pdf, config.path, config.name);
+      const success = await loadFontFromProject(
+        pdf,
+        config.path,
+        config.name,
+        config.style  // 传入样式参数
+      );
       if (success) {
-        console.log(`[PDF字体] ✓ 成功使用字体: ${config.name}`);
-        return { success: true, fontName: config.name };
+        loadedCount++;
+        fontName = config.name;
+        availableWeights.push(config.style);
+        console.log(`[PDF字体] ✓ 加载成功: ${config.name}-${config.style} (${config.description})`);
       }
     } catch (error) {
-      // 继续尝试下一个路径
-      continue;
+      console.warn(`[PDF字体] ✗ 跳过: ${config.path} - ${error.message}`);
     }
   }
 
-  // 如果所有尝试都失败，使用默认字体
-  console.warn('[PDF字体] ✗ 未能加载 SarasaMonoSC-Regular.ttf');
-  console.warn('[PDF字体] 将使用 helvetica 默认字体 (中文可能显示为方块)');
+  if (loadedCount === 0) {
+    console.warn('[PDF字体] ✗ 未能加载任何 ARUDJingxihei 字体');
+    console.warn('[PDF字体] 将使用 helvetica 默认字体 (中文可能显示为方块)');
+    pdf.setFont('helvetica');
+    return { success: false, fontName: 'helvetica', availableWeights: [] };
+  }
 
-  pdf.setFont('helvetica');
-  return { success: false, fontName: 'helvetica' };
+  console.log(`[PDF字体] ✓ 成功加载 ${loadedCount} 个字体变体: ${availableWeights.join(', ')}`);
+
+  // 设置默认字体为 normal
+  try {
+    pdf.setFont(fontName, 'normal');
+  } catch (error) {
+    console.warn('[PDF字体] ⚠ 设置默认字体失败，使用第一个可用字重');
+    pdf.setFont(fontName, availableWeights[0] || 'normal');
+  }
+
+  return { success: true, fontName, availableWeights };
 }
