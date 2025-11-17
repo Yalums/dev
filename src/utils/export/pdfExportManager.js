@@ -1560,18 +1560,18 @@ export class PDFExportManager {
    */
   parseInlineMarkdown(text) {
     const segments = [];
-    let currentPos = 0;
 
-    // 正则表达式模式（按优先级）
+    // 正则表达式模式（按优先级，长的在前）
+    // 重要：先匹配长模式(如***)，再匹配短模式(如**)
     const patterns = [
-      { type: 'code', regex: /`([^`]+)`/g },              // 行内代码
-      { type: 'bold-italic', regex: /\*\*\*(.+?)\*\*\*/g }, // 粗斜体
-      { type: 'bold-italic', regex: /___(.+?)___/g },     // 粗斜体
-      { type: 'bold', regex: /\*\*(.+?)\*\*/g },          // 粗体
-      { type: 'bold', regex: /__(.+?)__/g },              // 粗体
-      { type: 'italic', regex: /\*(.+?)\*/g },            // 斜体
-      { type: 'italic', regex: /_(.+?)_/g },              // 斜体
-      { type: 'link', regex: /\[([^\]]+)\]\(([^)]+)\)/g } // 链接
+      { type: 'code', regex: /`([^`]+)`/g },                    // 行内代码
+      { type: 'bold-italic', regex: /\*\*\*([^*]+?)\*\*\*/g }, // 粗斜体 (*** 优先于 **)
+      { type: 'bold-italic', regex: /___([^_]+?)___/g },       // 粗斜体 (___ 优先于 __)
+      { type: 'bold', regex: /\*\*([^*]+?)\*\*/g },            // 粗体 (** 不匹配单个*)
+      { type: 'bold', regex: /__([^_]+?)__/g },                // 粗体 (__ 不匹配单个_)
+      { type: 'italic', regex: /\*([^*]+?)\*/g },              // 斜体 (* 不匹配**)
+      { type: 'italic', regex: /_([^_]+?)_/g },                // 斜体 (_ 不匹配__)
+      { type: 'link', regex: /\[([^\]]+)\]\(([^)]+)\)/g }      // 链接
     ];
 
     // 查找所有匹配
@@ -1585,35 +1585,47 @@ export class PDFExportManager {
           start: match.index,
           end: regex.lastIndex,
           text: match[1],
-          url: match[2] // 仅用于链接
+          url: match[2], // 仅用于链接
+          fullMatch: match[0] // 保存完整匹配用于调试
         });
       }
     });
 
-    // 按位置排序
-    matches.sort((a, b) => a.start - b.start);
+    // 按位置排序，位置相同时按长度排序（长的优先）
+    matches.sort((a, b) => {
+      if (a.start !== b.start) return a.start - b.start;
+      return (b.end - b.start) - (a.end - a.start); // 长的在前
+    });
 
-    // 移除重叠的匹配（保留最外层）
+    // 移除重叠的匹配（保留更长/更早的）
     const filteredMatches = [];
     matches.forEach(match => {
       const overlaps = filteredMatches.some(existing =>
+        // 检查任何形式的重叠
         (match.start >= existing.start && match.start < existing.end) ||
-        (match.end > existing.start && match.end <= existing.end)
+        (match.end > existing.start && match.end <= existing.end) ||
+        (match.start <= existing.start && match.end >= existing.end)
       );
       if (!overlaps) {
         filteredMatches.push(match);
       }
     });
 
+    // 如果有调试需求，可以取消注释以下日志
+    // console.log('[PDF导出] 解析markdown:', { text, matches, filteredMatches });
+
     // 构建segments数组
     let lastEnd = 0;
     filteredMatches.forEach(match => {
       // 添加普通文本
       if (match.start > lastEnd) {
-        segments.push({
-          type: 'normal',
-          text: text.substring(lastEnd, match.start)
-        });
+        const normalText = text.substring(lastEnd, match.start);
+        if (normalText) {
+          segments.push({
+            type: 'normal',
+            text: normalText
+          });
+        }
       }
 
       // 添加格式化文本
@@ -1628,10 +1640,13 @@ export class PDFExportManager {
 
     // 添加剩余文本
     if (lastEnd < text.length) {
-      segments.push({
-        type: 'normal',
-        text: text.substring(lastEnd)
-      });
+      const remainingText = text.substring(lastEnd);
+      if (remainingText) {
+        segments.push({
+          type: 'normal',
+          text: remainingText
+        });
+      }
     }
 
     // 如果没有匹配，返回整个文本
@@ -1650,8 +1665,8 @@ export class PDFExportManager {
    */
   renderInlineSegments(segments, maxWidth) {
     let currentX = PDF_STYLES.MARGIN_LEFT;
-    let currentLineText = '';
     let currentLineSegments = [];
+    const availableWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT;
 
     segments.forEach((segment, idx) => {
       const text = this.cleanText(segment.text || '');
@@ -1661,8 +1676,55 @@ export class PDFExportManager {
       this.applySegmentStyle(segment.type);
       const textWidth = this.pdf.getTextWidth(text);
 
+      // 检查segment是否需要拆分（太长无法在一行显示）
+      const remainingWidth = availableWidth - currentX;
+
+      if (textWidth > remainingWidth) {
+        // 如果当前行已有内容，先渲染当前行
+        if (currentLineSegments.length > 0) {
+          this.renderSegmentLine(currentLineSegments);
+          this.currentY += PDF_STYLES.LINE_HEIGHT;
+          this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+          currentX = PDF_STYLES.MARGIN_LEFT;
+          currentLineSegments = [];
+        }
+
+        // 如果segment本身比整行还宽，需要拆分
+        const lineWidth = availableWidth - PDF_STYLES.MARGIN_LEFT;
+        if (textWidth > lineWidth) {
+          // 拆分文本
+          try {
+            const splitLines = this.pdf.splitTextToSize(text, lineWidth);
+            splitLines.forEach((line, lineIdx) => {
+              const cleanLine = this.cleanText(line);
+              if (!cleanLine) return;
+
+              // 渲染每一行
+              this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+              this.applySegmentStyle(segment.type);
+
+              if (segment.type === 'code') {
+                const lineWidth = this.pdf.getTextWidth(cleanLine);
+                const padding = 1;
+                this.pdf.setFillColor(245, 245, 245);
+                this.pdf.rect(PDF_STYLES.MARGIN_LEFT - padding, this.currentY - 3, lineWidth + padding * 2, 4, 'F');
+                this.pdf.setTextColor(220, 50, 50);
+              }
+
+              this.pdf.text(cleanLine, PDF_STYLES.MARGIN_LEFT, this.currentY);
+              this.currentY += PDF_STYLES.LINE_HEIGHT;
+            });
+            currentX = PDF_STYLES.MARGIN_LEFT;
+            return; // 处理下一个segment
+          } catch (error) {
+            console.error('[PDF导出] 文本拆分失败:', error);
+            // 如果拆分失败，直接渲染（可能会溢出，但至少显示内容）
+          }
+        }
+      }
+
       // 检查是否需要换行
-      if (currentX + textWidth > PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT && currentLineSegments.length > 0) {
+      if (currentX + textWidth > availableWidth && currentLineSegments.length > 0) {
         // 渲染当前行
         this.renderSegmentLine(currentLineSegments);
         this.currentY += PDF_STYLES.LINE_HEIGHT;
