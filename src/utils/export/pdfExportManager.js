@@ -18,6 +18,8 @@ const PDF_STYLES = {
   FONT_SIZE_BODY: 10,
   FONT_SIZE_CODE: 9,
   FONT_SIZE_TIMESTAMP: 8,
+  FONT_SIZE_HEADER: 8,
+  FONT_SIZE_FOOTER: 8,
 
   // 颜色 (RGB)
   COLOR_SENDER_HUMAN: [0, 102, 204],      // 蓝色
@@ -26,15 +28,20 @@ const PDF_STYLES = {
   COLOR_CODE_BG: [245, 245, 245],          // 代码背景
   COLOR_SECTION_BG: [250, 250, 250],       // 区块背景
   COLOR_TEXT: [0, 0, 0],                   // 黑色文本
+  COLOR_HEADER: [100, 100, 100],           // 页眉颜色
+  COLOR_FOOTER: [150, 150, 150],           // 页脚颜色
+  COLOR_BORDER: [200, 200, 200],           // 边框颜色
 
   // 间距
   MARGIN_LEFT: 15,
   MARGIN_RIGHT: 15,
-  MARGIN_TOP: 20,
-  MARGIN_BOTTOM: 20,
+  MARGIN_TOP: 25,    // 增加顶部边距为页眉留空间
+  MARGIN_BOTTOM: 25, // 增加底部边距为页脚留空间
   LINE_HEIGHT: 5,
   SECTION_SPACING: 8,
   MESSAGE_SPACING: 10,
+  HEADER_HEIGHT: 15, // 页眉高度
+  FOOTER_HEIGHT: 15, // 页脚高度
 
   // 页面
   PAGE_WIDTH: 210, // A4 宽度(mm)
@@ -51,6 +58,9 @@ export class PDFExportManager {
     this.config = {};
     this.useChineseFont = false; // 是否成功加载了中文字体
     this.chineseFontName = 'helvetica'; // 当前使用的字体名称
+    this.meta = null; // 保存元数据用于页眉/页脚
+    this.exportDate = null; // 导出时间
+    this.isFirstPage = true; // 是否是第一页（标题页不显示页眉）
   }
 
   /**
@@ -98,6 +108,11 @@ export class PDFExportManager {
       config
     });
 
+    // 保存元数据和导出时间
+    this.meta = meta;
+    this.exportDate = DateTimeUtils.formatDateTime(new Date());
+    this.isFirstPage = true;
+
     this.config = {
       includeThinking: config.includeThinking ?? true,
       includeArtifacts: config.includeArtifacts ?? true,
@@ -122,7 +137,7 @@ export class PDFExportManager {
       const fontLoadResult = await addChineseFontSupport(this.pdf);
       this.useChineseFont = fontLoadResult.success;
       this.chineseFontName = fontLoadResult.fontName;
-      
+
       if (!this.useChineseFont) {
         console.warn('[PDF导出] 中文字体加载失败，将使用默认字体（中文可能显示为方框）');
       } else {
@@ -133,7 +148,7 @@ export class PDFExportManager {
       this.useChineseFont = false;
       this.chineseFontName = 'helvetica';
     }
-    
+
     // 无论字体是否加载成功，都设置一个默认字体
     this.pdf.setFont(this.chineseFontName);
 
@@ -142,10 +157,20 @@ export class PDFExportManager {
     this.renderMetadata(meta);
     this.currentY += PDF_STYLES.SECTION_SPACING;
 
+    // 渲染目录（如果有多于1条消息）
+    if (messages.length > 1) {
+      console.log('[PDF导出] 生成目录...');
+      this.renderTOC(messages);
+    }
+
     // 渲染消息
     for (let i = 0; i < messages.length; i++) {
       this.renderMessage(messages[i], i + 1);
     }
+
+    // 为所有页面添加页眉和页脚
+    console.log('[PDF导出] 添加页眉和页脚...');
+    this.addHeadersAndFooters();
 
     // 生成文件名并保存
     const fileName = this.generateFileName(meta);
@@ -217,6 +242,86 @@ export class PDFExportManager {
       this.pdf.text(line, PDF_STYLES.MARGIN_LEFT, this.currentY);
       this.currentY += PDF_STYLES.LINE_HEIGHT;
     });
+  }
+
+  /**
+   * 渲染目录（Table of Contents）
+   * @param {Array} messages - 消息列表
+   */
+  renderTOC(messages) {
+    // 添加新页面用于目录
+    this.pdf.addPage();
+    this.isFirstPage = false;
+    this.currentY = PDF_STYLES.MARGIN_TOP;
+
+    // 渲染目录标题
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_H1);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+    this.pdf.text('Table of Contents', PDF_STYLES.MARGIN_LEFT, this.currentY);
+    this.currentY += PDF_STYLES.LINE_HEIGHT * 2;
+
+    // 绘制标题下方的分隔线
+    this.pdf.setDrawColor(...PDF_STYLES.COLOR_BORDER);
+    this.pdf.setLineWidth(0.3);
+    this.pdf.line(
+      PDF_STYLES.MARGIN_LEFT,
+      this.currentY,
+      PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT,
+      this.currentY
+    );
+    this.currentY += PDF_STYLES.LINE_HEIGHT;
+
+    // 渲染消息列表
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+
+    messages.forEach((message, index) => {
+      this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+
+      const messageNumber = `${index + 1}.`;
+      const sender = message.sender === 'human' ? 'Human' : 'Assistant';
+
+      // 获取消息预览（前50个字符）
+      let preview = message.display_text || '';
+      preview = this.cleanText(preview);
+      preview = preview.replace(/\n/g, ' ').substring(0, 50);
+      if (preview.length >= 50) {
+        preview += '...';
+      }
+
+      // 添加分支标记
+      let branchMarker = '';
+      if (message.branchInfo?.isBranchPoint) {
+        branchMarker = ` [Branch ${message.branchInfo.childCount}]`;
+      }
+
+      // 构建目录条目
+      const entry = `${messageNumber} ${sender}${branchMarker}`;
+
+      // 设置发送者颜色
+      const color = message.sender === 'human'
+        ? PDF_STYLES.COLOR_SENDER_HUMAN
+        : PDF_STYLES.COLOR_SENDER_ASSISTANT;
+      this.pdf.setTextColor(...color);
+
+      // 渲染条目
+      this.pdf.text(entry, PDF_STYLES.MARGIN_LEFT + 5, this.currentY);
+
+      // 渲染预览（如果有）
+      if (preview) {
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
+        this.pdf.setTextColor(...PDF_STYLES.COLOR_TIMESTAMP);
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+        this.checkPageBreak(PDF_STYLES.FONT_SIZE_TIMESTAMP);
+        this.pdf.text(preview, PDF_STYLES.MARGIN_LEFT + 10, this.currentY);
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+      }
+
+      this.currentY += PDF_STYLES.LINE_HEIGHT * 1.5;
+    });
+
+    // 添加新页面开始正文
+    this.pdf.addPage();
+    this.currentY = PDF_STYLES.MARGIN_TOP;
   }
 
   /**
@@ -323,12 +428,16 @@ export class PDFExportManager {
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
 
-    // 处理代码块
-    const parts = this.parseTextWithCodeBlocks(text);
+    // 处理代码块和LaTeX公式
+    const parts = this.parseTextWithCodeBlocksAndLatex(text);
 
     parts.forEach(part => {
       if (part.type === 'code') {
         this.renderCodeBlock(part.content, part.language);
+      } else if (part.type === 'latex-block') {
+        this.renderLatexBlock(part.content);
+      } else if (part.type === 'latex-inline') {
+        this.renderLatexInline(part.content, maxWidth);
       } else {
         this.renderPlainText(part.content, maxWidth);
       }
@@ -385,80 +494,256 @@ export class PDFExportManager {
     this.checkPageBreak(PDF_STYLES.FONT_SIZE_CODE + PDF_STYLES.SECTION_SPACING * 2);
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
-    const codeWidth = maxWidth - 4; // 留出左右padding
+    const lineNumberWidth = 8; // 行号区域宽度
+    const codeWidth = maxWidth - lineNumberWidth - 8; // 留出行号和padding
 
     // 清理代码内容
     const cleanCode = this.cleanText(code);
     const cleanLanguage = this.cleanText(language);
 
-    // 渲染语言标签
+    const startY = this.currentY;
+
+    // 渲染语言标签（在代码块外部上方）
     if (cleanLanguage) {
       this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
-      this.pdf.setTextColor(...PDF_STYLES.COLOR_TIMESTAMP);
-      this.pdf.text(`[${cleanLanguage}]`, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
-      this.currentY += PDF_STYLES.LINE_HEIGHT;
+      this.pdf.setTextColor(100, 100, 100); // 深灰色
+
+      // 添加语言标签背景
+      const labelText = cleanLanguage.toUpperCase();
+      const labelWidth = this.pdf.getTextWidth(labelText) + 4;
+      this.pdf.setFillColor(220, 220, 220);
+      this.pdf.roundedRect(
+        PDF_STYLES.MARGIN_LEFT,
+        this.currentY - 3,
+        labelWidth,
+        5,
+        1,
+        1,
+        'F'
+      );
+      this.pdf.text(labelText, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
+      this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
     }
 
     // 预处理代码行,进行自动换行
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
-    // 使用中文字体而不是courier，以支持代码块中的中文注释
-    // this.pdf.setFont('courier');  // courier不支持中文
     this.pdf.setFont(this.chineseFontName);
     const codeLines = cleanCode.split('\n');
     const wrappedLines = [];
-    
+
     codeLines.forEach(line => {
       if (!line) {
-        wrappedLines.push('');
+        wrappedLines.push({ text: '', lineNumber: wrappedLines.length + 1 });
         return;
       }
-      // 清理单行代码
       const cleanLine = this.cleanText(line);
       if (!cleanLine) {
-        wrappedLines.push('');
+        wrappedLines.push({ text: '', lineNumber: wrappedLines.length + 1 });
         return;
       }
-      
-      // 使用splitTextToSize自动换行,考虑等宽字体
+
+      // 使用splitTextToSize自动换行
       try {
         const wrapped = this.pdf.splitTextToSize(cleanLine, codeWidth);
-        wrappedLines.push(...wrapped);
+        wrapped.forEach((wLine, idx) => {
+          wrappedLines.push({
+            text: wLine,
+            lineNumber: idx === 0 ? wrappedLines.length + 1 : null // 只在第一行显示行号
+          });
+        });
       } catch (error) {
-        // 如果splitTextToSize失败,手动换行
-        const charsPerLine = Math.floor(codeWidth / 2); // 粗略估算
-        for (let i = 0; i < cleanLine.length; i += charsPerLine) {
-          wrappedLines.push(cleanLine.substring(i, i + charsPerLine));
-        }
+        wrappedLines.push({ text: cleanLine, lineNumber: wrappedLines.length + 1 });
       }
     });
 
     // 计算背景高度
-    const bgHeight = PDF_STYLES.LINE_HEIGHT * (wrappedLines.length + 1) + 6;
+    const paddingTop = 3;
+    const paddingBottom = 3;
+    const bgHeight = PDF_STYLES.LINE_HEIGHT * wrappedLines.length + paddingTop + paddingBottom;
 
-    // 绘制背景
-    this.pdf.setFillColor(...PDF_STYLES.COLOR_CODE_BG);
-    this.pdf.rect(
+    // 绘制代码块背景（带圆角）
+    this.pdf.setFillColor(248, 248, 248); // 更浅的背景
+    this.pdf.roundedRect(
       PDF_STYLES.MARGIN_LEFT,
-      this.currentY - 3,
+      this.currentY - paddingTop,
       maxWidth,
       bgHeight,
+      1.5,
+      1.5,
       'F'
     );
 
-    // 渲染代码内容(已自动换行)
-    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
-    wrappedLines.forEach(line => {
+    // 绘制代码块边框
+    this.pdf.setDrawColor(200, 200, 200);
+    this.pdf.setLineWidth(0.3);
+    this.pdf.roundedRect(
+      PDF_STYLES.MARGIN_LEFT,
+      this.currentY - paddingTop,
+      maxWidth,
+      bgHeight,
+      1.5,
+      1.5,
+      'S'
+    );
+
+    // 绘制行号区域分隔线
+    this.pdf.setDrawColor(220, 220, 220);
+    this.pdf.setLineWidth(0.2);
+    this.pdf.line(
+      PDF_STYLES.MARGIN_LEFT + lineNumberWidth,
+      this.currentY - paddingTop,
+      PDF_STYLES.MARGIN_LEFT + lineNumberWidth,
+      this.currentY - paddingTop + bgHeight
+    );
+
+    // 渲染代码内容（带行号）
+    wrappedLines.forEach(({ text, lineNumber }) => {
       this.checkPageBreak(PDF_STYLES.FONT_SIZE_CODE);
-      const safeLine = this.cleanText(line);
+
+      // 渲染行号
+      if (lineNumber !== null) {
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE - 1);
+        this.pdf.setTextColor(150, 150, 150);
+        const lineNumStr = String(lineNumber).padStart(3, ' ');
+        this.pdf.text(lineNumStr, PDF_STYLES.MARGIN_LEFT + 1, this.currentY);
+      }
+
+      // 渲染代码文本
+      this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
+      this.pdf.setTextColor(50, 50, 50); // 深灰色，更好的对比度
+      const safeLine = this.cleanText(text);
       if (safeLine !== null && safeLine !== undefined) {
-        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
+        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + lineNumberWidth + 2, this.currentY);
       }
       this.currentY += PDF_STYLES.LINE_HEIGHT;
     });
 
-    // 恢复默认字体
+    // 恢复默认字体和颜色
     this.pdf.setFont(this.chineseFontName);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
     this.currentY += PDF_STYLES.SECTION_SPACING;
+  }
+
+  /**
+   * 渲染块级LaTeX公式
+   * @param {string} latex - LaTeX公式内容
+   */
+  renderLatexBlock(latex) {
+    this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY + PDF_STYLES.SECTION_SPACING * 2);
+
+    const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
+    const cleanLatex = this.cleanText(latex);
+
+    // 渲染"Math"标签
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
+    this.pdf.setTextColor(70, 130, 180); // 蓝色
+
+    const labelText = 'MATH';
+    const labelWidth = this.pdf.getTextWidth(labelText) + 4;
+    this.pdf.setFillColor(230, 240, 250);
+    this.pdf.roundedRect(
+      PDF_STYLES.MARGIN_LEFT,
+      this.currentY - 3,
+      labelWidth,
+      5,
+      1,
+      1,
+      'F'
+    );
+    this.pdf.text(labelText, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
+    this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
+
+    // 处理公式文本换行
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+    this.pdf.setFont(this.chineseFontName);
+
+    let formulaLines;
+    try {
+      formulaLines = this.pdf.splitTextToSize(cleanLatex, maxWidth - 8);
+    } catch (error) {
+      formulaLines = cleanLatex.split('\n');
+    }
+
+    // 计算背景高度
+    const paddingTop = 3;
+    const paddingBottom = 3;
+    const bgHeight = PDF_STYLES.LINE_HEIGHT * formulaLines.length + paddingTop + paddingBottom;
+
+    // 绘制公式背景（浅蓝色）
+    this.pdf.setFillColor(245, 250, 255);
+    this.pdf.roundedRect(
+      PDF_STYLES.MARGIN_LEFT,
+      this.currentY - paddingTop,
+      maxWidth,
+      bgHeight,
+      1.5,
+      1.5,
+      'F'
+    );
+
+    // 绘制边框
+    this.pdf.setDrawColor(180, 210, 240);
+    this.pdf.setLineWidth(0.4);
+    this.pdf.roundedRect(
+      PDF_STYLES.MARGIN_LEFT,
+      this.currentY - paddingTop,
+      maxWidth,
+      bgHeight,
+      1.5,
+      1.5,
+      'S'
+    );
+
+    // 渲染公式内容
+    this.pdf.setTextColor(30, 60, 120); // 深蓝色
+    formulaLines.forEach(line => {
+      this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+      const safeLine = this.cleanText(line);
+      if (safeLine && safeLine.trim().length > 0) {
+        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + 4, this.currentY);
+      }
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    });
+
+    // 恢复默认样式
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+    this.currentY += PDF_STYLES.SECTION_SPACING;
+  }
+
+  /**
+   * 渲染行内LaTeX公式
+   * @param {string} latex - LaTeX公式内容
+   * @param {number} maxWidth - 最大宽度
+   */
+  renderLatexInline(latex, maxWidth) {
+    const cleanLatex = this.cleanText(latex);
+
+    // 设置行内公式样式
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+
+    // 添加前缀和后缀标记
+    const formulaText = `⟨ ${cleanLatex} ⟩`;
+
+    // 使用特殊颜色标识数学公式
+    this.pdf.setTextColor(70, 130, 180); // 蓝色
+
+    try {
+      const lines = this.pdf.splitTextToSize(formulaText, maxWidth);
+      lines.forEach(line => {
+        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+        const safeLine = this.cleanText(line);
+        if (safeLine && safeLine.trim().length > 0) {
+          this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT, this.currentY);
+        }
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+      });
+    } catch (error) {
+      this.pdf.text(formulaText, PDF_STYLES.MARGIN_LEFT, this.currentY);
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    }
+
+    // 恢复默认颜色
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
   }
 
   /**
@@ -564,44 +849,213 @@ export class PDFExportManager {
   }
 
   /**
+   * 渲染页眉
+   * @param {number} pageNumber - 当前页码（可选）
+   */
+  renderHeader(pageNumber = null) {
+    // 第一页（标题页）不显示页眉
+    if (this.isFirstPage) {
+      return;
+    }
+
+    const originalY = this.currentY;
+    const originalFontSize = this.pdf.internal.getFontSize();
+
+    // 设置页眉样式
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_HEADER);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_HEADER);
+
+    // 获取标题（截断过长的标题）
+    let title = this.meta?.name || 'Conversation';
+    title = this.cleanText(title);
+
+    const maxTitleWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT - 20;
+    const titleWidth = this.pdf.getTextWidth(title);
+
+    if (titleWidth > maxTitleWidth) {
+      // 截断标题并添加省略号
+      while (this.pdf.getTextWidth(title + '...') > maxTitleWidth && title.length > 0) {
+        title = title.slice(0, -1);
+      }
+      title = title + '...';
+    }
+
+    // 渲染标题在页眉左侧
+    this.pdf.text(title, PDF_STYLES.MARGIN_LEFT, 12);
+
+    // 如果提供了页码，在页眉右侧显示
+    if (pageNumber !== null) {
+      const pageText = `Page ${pageNumber}`;
+      const pageTextWidth = this.pdf.getTextWidth(pageText);
+      this.pdf.text(pageText, PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - pageTextWidth, 12);
+    }
+
+    // 绘制页眉下方的分隔线
+    this.pdf.setDrawColor(...PDF_STYLES.COLOR_BORDER);
+    this.pdf.setLineWidth(0.1);
+    this.pdf.line(
+      PDF_STYLES.MARGIN_LEFT,
+      PDF_STYLES.HEADER_HEIGHT,
+      PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT,
+      PDF_STYLES.HEADER_HEIGHT
+    );
+
+    // 恢复原始设置
+    this.pdf.setFontSize(originalFontSize);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+    this.currentY = originalY;
+  }
+
+  /**
+   * 渲染页脚
+   * @param {number} pageNumber - 当前页码
+   * @param {number} totalPages - 总页数
+   */
+  renderFooter(pageNumber, totalPages) {
+    const originalY = this.currentY;
+    const originalFontSize = this.pdf.internal.getFontSize();
+
+    // 设置页脚样式
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_FOOTER);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_FOOTER);
+
+    const footerY = PDF_STYLES.PAGE_HEIGHT - 10;
+
+    // 绘制页脚上方的分隔线
+    this.pdf.setDrawColor(...PDF_STYLES.COLOR_BORDER);
+    this.pdf.setLineWidth(0.1);
+    this.pdf.line(
+      PDF_STYLES.MARGIN_LEFT,
+      PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.FOOTER_HEIGHT,
+      PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT,
+      PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.FOOTER_HEIGHT
+    );
+
+    // 左侧显示导出时间
+    const exportText = `Exported: ${this.exportDate}`;
+    this.pdf.text(exportText, PDF_STYLES.MARGIN_LEFT, footerY);
+
+    // 右侧显示页码
+    const pageText = `${pageNumber} / ${totalPages}`;
+    const pageTextWidth = this.pdf.getTextWidth(pageText);
+    this.pdf.text(pageText, PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - pageTextWidth, footerY);
+
+    // 恢复原始设置
+    this.pdf.setFontSize(originalFontSize);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+    this.currentY = originalY;
+  }
+
+  /**
+   * 为所有页面添加页眉和页脚
+   */
+  addHeadersAndFooters() {
+    const totalPages = this.pdf.internal.getNumberOfPages();
+
+    for (let i = 1; i <= totalPages; i++) {
+      this.pdf.setPage(i);
+
+      // 第一页之后的页面显示页眉
+      if (i > 1) {
+        this.isFirstPage = false;
+        this.renderHeader(i);
+      }
+
+      // 所有页面显示页脚
+      this.renderFooter(i, totalPages);
+    }
+  }
+
+  /**
    * 检查是否需要分页
    */
   checkPageBreak(requiredSpace = 20) {
     const bottomLimit = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
 
     if (this.currentY + requiredSpace > bottomLimit) {
+      this.isFirstPage = false; // 新页面不是第一页
       this.pdf.addPage();
       this.currentY = PDF_STYLES.MARGIN_TOP;
     }
   }
 
   /**
-   * 解析文本中的代码块
+   * 解析文本中的代码块和LaTeX公式
+   * 优先级：代码块 > LaTeX块级公式 > LaTeX行内公式
    */
-  parseTextWithCodeBlocks(text) {
+  parseTextWithCodeBlocksAndLatex(text) {
     const parts = [];
+    const elements = [];
+
+    // 1. 首先提取所有代码块
     const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
-    let lastIndex = 0;
     let match;
+    let lastIndex = 0;
 
     while ((match = codeBlockRegex.exec(text)) !== null) {
-      // 添加代码块前的文本
-      if (match.index > lastIndex) {
-        const plainText = text.substring(lastIndex, match.index);
+      elements.push({
+        start: match.index,
+        end: match.index + match[0].length,
+        type: 'code',
+        language: match[1] || '',
+        content: match[2]
+      });
+    }
+
+    // 2. 提取块级LaTeX公式（$$...$$）
+    const latexBlockRegex = /\$\$([\s\S]*?)\$\$/g;
+    while ((match = latexBlockRegex.exec(text)) !== null) {
+      // 检查是否与代码块重叠
+      const overlaps = elements.some(el =>
+        (match.index >= el.start && match.index < el.end) ||
+        (match.index + match[0].length > el.start && match.index + match[0].length <= el.end)
+      );
+      if (!overlaps) {
+        elements.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          type: 'latex-block',
+          content: match[1].trim()
+        });
+      }
+    }
+
+    // 3. 提取行内LaTeX公式（$...$，但不是$$）
+    const latexInlineRegex = /(?<!\$)\$(?!\$)((?:\\.|[^$\\])+?)\$(?!\$)/g;
+    while ((match = latexInlineRegex.exec(text)) !== null) {
+      // 检查是否与已有元素重叠
+      const overlaps = elements.some(el =>
+        (match.index >= el.start && match.index < el.end) ||
+        (match.index + match[0].length > el.start && match.index + match[0].length <= el.end)
+      );
+      if (!overlaps) {
+        elements.push({
+          start: match.index,
+          end: match.index + match[0].length,
+          type: 'latex-inline',
+          content: match[1].trim()
+        });
+      }
+    }
+
+    // 4. 按位置排序所有元素
+    elements.sort((a, b) => a.start - b.start);
+
+    // 5. 构建最终的parts数组
+    lastIndex = 0;
+    elements.forEach(element => {
+      // 添加元素前的文本
+      if (element.start > lastIndex) {
+        const plainText = text.substring(lastIndex, element.start);
         if (plainText.trim()) {
           parts.push({ type: 'text', content: plainText });
         }
       }
 
-      // 添加代码块
-      parts.push({
-        type: 'code',
-        language: match[1] || '',
-        content: match[2]
-      });
-
-      lastIndex = match.index + match[0].length;
-    }
+      // 添加元素本身
+      parts.push(element);
+      lastIndex = element.end;
+    });
 
     // 添加最后的文本
     if (lastIndex < text.length) {
@@ -611,12 +1065,19 @@ export class PDFExportManager {
       }
     }
 
-    // 如果没有代码块,返回整个文本
+    // 如果没有特殊元素,返回整个文本
     if (parts.length === 0) {
       parts.push({ type: 'text', content: text });
     }
 
     return parts;
+  }
+
+  /**
+   * 解析文本中的代码块（旧方法，保留以兼容）
+   */
+  parseTextWithCodeBlocks(text) {
+    return this.parseTextWithCodeBlocksAndLatex(text);
   }
 
   /**
