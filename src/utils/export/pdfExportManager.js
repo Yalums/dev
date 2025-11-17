@@ -481,7 +481,8 @@ export class PDFExportManager {
       } else if (part.type === 'latex-inline') {
         this.renderLatexInline(part.content, maxWidth);
       } else {
-        this.renderPlainText(part.content, maxWidth);
+        // 渲染普通文本，支持markdown格式
+        this.renderMarkdownText(part.content, maxWidth);
       }
     });
 
@@ -786,7 +787,10 @@ export class PDFExportManager {
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
     const padding = 3;
+
+    // 清理并转换LaTeX符号
     const cleanLatex = this.cleanText(latex);
+    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
 
     // 渲染"Math"标签
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
@@ -812,9 +816,9 @@ export class PDFExportManager {
 
     let formulaLines;
     try {
-      formulaLines = this.pdf.splitTextToSize(cleanLatex, maxWidth - 8);
+      formulaLines = this.pdf.splitTextToSize(renderedLatex, maxWidth - 8);
     } catch (error) {
-      formulaLines = cleanLatex.split('\n');
+      formulaLines = renderedLatex.split('\n');
     }
 
     // 逐行渲染
@@ -964,11 +968,14 @@ export class PDFExportManager {
   renderLatexInline(latex, maxWidth) {
     const cleanLatex = this.cleanText(latex);
 
+    // 转换LaTeX符号为Unicode
+    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
+
     // 设置行内公式样式
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
 
     // 添加前缀和后缀标记
-    const formulaText = `⟨ ${cleanLatex} ⟩`;
+    const formulaText = `⟨${renderedLatex}⟩`;
 
     // 使用特殊颜色标识数学公式
     this.pdf.setTextColor(70, 130, 180); // 蓝色
@@ -1281,6 +1288,609 @@ export class PDFExportManager {
    */
   parseTextWithCodeBlocks(text) {
     return this.parseTextWithCodeBlocksAndLatex(text);
+  }
+
+  /**
+   * 解析markdown格式的文本并渲染
+   * 支持：粗体、斜体、行内代码、链接、列表、引用等
+   */
+  renderMarkdownText(text, maxWidth) {
+    if (!text || text.trim().length === 0) {
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+      return;
+    }
+
+    const cleanedText = this.cleanText(text);
+    if (!cleanedText || cleanedText.trim().length === 0) {
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+      return;
+    }
+
+    // 按行处理文本
+    const lines = cleanedText.split('\n');
+
+    lines.forEach(line => {
+      this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+
+      // 处理不同类型的行
+      if (line.trim() === '') {
+        // 空行
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+      } else if (line.match(/^#{1,6}\s/)) {
+        // 标题
+        this.renderMarkdownHeading(line, maxWidth);
+      } else if (line.match(/^>\s/)) {
+        // 引用
+        this.renderMarkdownQuote(line, maxWidth);
+      } else if (line.match(/^[-*+]\s/) || line.match(/^\d+\.\s/)) {
+        // 列表
+        this.renderMarkdownList(line, maxWidth);
+      } else {
+        // 普通文本（可能包含行内格式）
+        this.renderMarkdownInlineFormats(line, maxWidth);
+      }
+    });
+  }
+
+  /**
+   * 渲染markdown标题
+   */
+  renderMarkdownHeading(line, maxWidth) {
+    const match = line.match(/^(#{1,6})\s+(.+)$/);
+    if (!match) {
+      this.renderPlainText(line, maxWidth);
+      return;
+    }
+
+    const level = match[1].length;
+    const text = match[2];
+
+    // 根据标题级别设置字体大小
+    const fontSize = PDF_STYLES.FONT_SIZE_BODY + (7 - level) * 2;
+    const oldFontSize = this.pdf.internal.getFontSize();
+
+    this.pdf.setFontSize(fontSize);
+    this.pdf.setFont(this.chineseFontName, 'bold');
+
+    try {
+      const lines = this.pdf.splitTextToSize(text, maxWidth);
+      lines.forEach(l => {
+        this.checkPageBreak(fontSize);
+        const cleanLine = this.cleanText(l);
+        if (cleanLine && cleanLine.trim().length > 0) {
+          this.pdf.text(cleanLine, PDF_STYLES.MARGIN_LEFT, this.currentY);
+        }
+        this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
+      });
+    } catch (error) {
+      console.error('[PDF导出] 标题渲染失败:', error);
+      this.pdf.text(text, PDF_STYLES.MARGIN_LEFT, this.currentY);
+      this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
+    }
+
+    // 恢复字体
+    this.pdf.setFontSize(oldFontSize);
+    this.pdf.setFont(this.chineseFontName, 'normal');
+
+    this.currentY += PDF_STYLES.LINE_HEIGHT * 0.5; // 标题后额外间距
+  }
+
+  /**
+   * 渲染markdown引用
+   */
+  renderMarkdownQuote(line, maxWidth) {
+    const text = line.replace(/^>\s*/, '');
+    const quoteWidth = maxWidth - 8;
+    const quoteX = PDF_STYLES.MARGIN_LEFT + 6;
+
+    // 绘制左侧竖线
+    this.pdf.setDrawColor(150, 150, 150);
+    this.pdf.setLineWidth(0.5);
+
+    const startY = this.currentY - 2;
+
+    // 渲染文本
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+    this.pdf.setTextColor(100, 100, 100);
+
+    try {
+      const lines = this.pdf.splitTextToSize(text, quoteWidth);
+      lines.forEach(l => {
+        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+        const cleanLine = this.cleanText(l);
+        if (cleanLine && cleanLine.trim().length > 0) {
+          this.pdf.text(cleanLine, quoteX, this.currentY);
+        }
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+      });
+
+      // 绘制引用线
+      this.pdf.line(
+        PDF_STYLES.MARGIN_LEFT + 2,
+        startY,
+        PDF_STYLES.MARGIN_LEFT + 2,
+        this.currentY - 2
+      );
+    } catch (error) {
+      console.error('[PDF导出] 引用渲染失败:', error);
+      this.pdf.text(text, quoteX, this.currentY);
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    }
+
+    // 恢复颜色
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+  }
+
+  /**
+   * 渲染markdown列表
+   */
+  renderMarkdownList(line, maxWidth) {
+    let bullet = '';
+    let text = '';
+
+    // 检测列表类型
+    const unorderedMatch = line.match(/^([-*+])\s+(.+)$/);
+    const orderedMatch = line.match(/^(\d+)\.\s+(.+)$/);
+
+    if (unorderedMatch) {
+      bullet = '•'; // 使用圆点作为项目符号
+      text = unorderedMatch[2];
+    } else if (orderedMatch) {
+      bullet = orderedMatch[1] + '.';
+      text = orderedMatch[2];
+    } else {
+      this.renderPlainText(line, maxWidth);
+      return;
+    }
+
+    const bulletWidth = this.pdf.getTextWidth(bullet + '  ');
+    const textWidth = maxWidth - bulletWidth;
+    const textX = PDF_STYLES.MARGIN_LEFT + bulletWidth;
+
+    // 渲染项目符号
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+    this.pdf.text(bullet, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
+
+    // 渲染文本
+    try {
+      const lines = this.pdf.splitTextToSize(text, textWidth);
+      lines.forEach((l, idx) => {
+        if (idx > 0) {
+          this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+        }
+        const cleanLine = this.cleanText(l);
+        if (cleanLine && cleanLine.trim().length > 0) {
+          this.pdf.text(cleanLine, textX, this.currentY);
+        }
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+      });
+    } catch (error) {
+      console.error('[PDF导出] 列表渲染失败:', error);
+      this.pdf.text(text, textX, this.currentY);
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    }
+  }
+
+  /**
+   * 渲染包含行内格式的markdown文本
+   * 支持：**粗体**、*斜体*、`代码`、[链接](url)
+   */
+  renderMarkdownInlineFormats(line, maxWidth) {
+    if (!line || line.trim().length === 0) {
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+      return;
+    }
+
+    // 解析行内格式
+    const segments = this.parseInlineMarkdown(line);
+
+    // 按行渲染segments
+    this.renderInlineSegments(segments, maxWidth);
+  }
+
+  /**
+   * 解析行内markdown格式
+   * 返回格式化的文本片段数组
+   */
+  parseInlineMarkdown(text) {
+    const segments = [];
+    let currentPos = 0;
+
+    // 正则表达式模式（按优先级）
+    const patterns = [
+      { type: 'code', regex: /`([^`]+)`/g },              // 行内代码
+      { type: 'bold-italic', regex: /\*\*\*(.+?)\*\*\*/g }, // 粗斜体
+      { type: 'bold-italic', regex: /___(.+?)___/g },     // 粗斜体
+      { type: 'bold', regex: /\*\*(.+?)\*\*/g },          // 粗体
+      { type: 'bold', regex: /__(.+?)__/g },              // 粗体
+      { type: 'italic', regex: /\*(.+?)\*/g },            // 斜体
+      { type: 'italic', regex: /_(.+?)_/g },              // 斜体
+      { type: 'link', regex: /\[([^\]]+)\]\(([^)]+)\)/g } // 链接
+    ];
+
+    // 查找所有匹配
+    const matches = [];
+    patterns.forEach(pattern => {
+      let match;
+      const regex = new RegExp(pattern.regex.source, 'g');
+      while ((match = regex.exec(text)) !== null) {
+        matches.push({
+          type: pattern.type,
+          start: match.index,
+          end: regex.lastIndex,
+          text: match[1],
+          url: match[2] // 仅用于链接
+        });
+      }
+    });
+
+    // 按位置排序
+    matches.sort((a, b) => a.start - b.start);
+
+    // 移除重叠的匹配（保留最外层）
+    const filteredMatches = [];
+    matches.forEach(match => {
+      const overlaps = filteredMatches.some(existing =>
+        (match.start >= existing.start && match.start < existing.end) ||
+        (match.end > existing.start && match.end <= existing.end)
+      );
+      if (!overlaps) {
+        filteredMatches.push(match);
+      }
+    });
+
+    // 构建segments数组
+    let lastEnd = 0;
+    filteredMatches.forEach(match => {
+      // 添加普通文本
+      if (match.start > lastEnd) {
+        segments.push({
+          type: 'normal',
+          text: text.substring(lastEnd, match.start)
+        });
+      }
+
+      // 添加格式化文本
+      segments.push({
+        type: match.type,
+        text: match.text,
+        url: match.url
+      });
+
+      lastEnd = match.end;
+    });
+
+    // 添加剩余文本
+    if (lastEnd < text.length) {
+      segments.push({
+        type: 'normal',
+        text: text.substring(lastEnd)
+      });
+    }
+
+    // 如果没有匹配，返回整个文本
+    if (segments.length === 0) {
+      segments.push({
+        type: 'normal',
+        text: text
+      });
+    }
+
+    return segments;
+  }
+
+  /**
+   * 渲染行内格式的文本片段
+   */
+  renderInlineSegments(segments, maxWidth) {
+    let currentX = PDF_STYLES.MARGIN_LEFT;
+    let currentLineText = '';
+    let currentLineSegments = [];
+
+    segments.forEach((segment, idx) => {
+      const text = this.cleanText(segment.text || '');
+      if (!text) return;
+
+      // 设置样式并测量宽度
+      this.applySegmentStyle(segment.type);
+      const textWidth = this.pdf.getTextWidth(text);
+
+      // 检查是否需要换行
+      if (currentX + textWidth > PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT && currentLineSegments.length > 0) {
+        // 渲染当前行
+        this.renderSegmentLine(currentLineSegments);
+        this.currentY += PDF_STYLES.LINE_HEIGHT;
+        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+
+        // 重置行状态
+        currentX = PDF_STYLES.MARGIN_LEFT;
+        currentLineSegments = [];
+      }
+
+      // 添加到当前行
+      currentLineSegments.push({
+        ...segment,
+        x: currentX,
+        text: text
+      });
+      currentX += textWidth;
+    });
+
+    // 渲染最后一行
+    if (currentLineSegments.length > 0) {
+      this.renderSegmentLine(currentLineSegments);
+      this.currentY += PDF_STYLES.LINE_HEIGHT;
+    }
+
+    // 恢复默认样式
+    this.pdf.setFont(this.chineseFontName, 'normal');
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+  }
+
+  /**
+   * 渲染一行segment
+   */
+  renderSegmentLine(segments) {
+    segments.forEach(segment => {
+      this.applySegmentStyle(segment.type);
+
+      if (segment.type === 'link') {
+        // 渲染链接（添加下划线）
+        this.pdf.textWithLink(segment.text, segment.x, this.currentY, {
+          url: segment.url || '#'
+        });
+        // 绘制下划线
+        const textWidth = this.pdf.getTextWidth(segment.text);
+        this.pdf.line(segment.x, this.currentY + 0.5, segment.x + textWidth, this.currentY + 0.5);
+      } else if (segment.type === 'code') {
+        // 渲染行内代码（添加背景色）
+        const textWidth = this.pdf.getTextWidth(segment.text);
+        const padding = 1;
+        this.pdf.setFillColor(245, 245, 245);
+        this.pdf.rect(segment.x - padding, this.currentY - 3, textWidth + padding * 2, 4, 'F');
+        this.pdf.setTextColor(220, 50, 50);
+        this.pdf.text(segment.text, segment.x, this.currentY);
+      } else {
+        // 普通文本
+        this.pdf.text(segment.text, segment.x, this.currentY);
+      }
+    });
+  }
+
+  /**
+   * 应用segment样式
+   */
+  applySegmentStyle(type) {
+    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
+    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
+
+    switch (type) {
+      case 'bold':
+        this.pdf.setFont(this.chineseFontName, 'bold');
+        break;
+      case 'italic':
+        this.pdf.setFont(this.chineseFontName, 'italic');
+        break;
+      case 'bold-italic':
+        this.pdf.setFont(this.chineseFontName, 'bolditalic');
+        break;
+      case 'code':
+        this.pdf.setFont('courier', 'normal');
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
+        this.pdf.setTextColor(220, 50, 50);
+        break;
+      case 'link':
+        this.pdf.setFont(this.chineseFontName, 'normal');
+        this.pdf.setTextColor(0, 102, 204); // 蓝色
+        break;
+      default:
+        this.pdf.setFont(this.chineseFontName, 'normal');
+    }
+  }
+
+  /**
+   * 将LaTeX命令转换为Unicode数学符号
+   * 这使得PDF中的数学公式更易读
+   */
+  convertLatexToUnicode(latex) {
+    if (!latex) return '';
+
+    let result = latex;
+
+    // 希腊字母
+    const greekLetters = {
+      '\\alpha': 'α', '\\Alpha': 'Α',
+      '\\beta': 'β', '\\Beta': 'Β',
+      '\\gamma': 'γ', '\\Gamma': 'Γ',
+      '\\delta': 'δ', '\\Delta': 'Δ',
+      '\\epsilon': 'ε', '\\Epsilon': 'Ε',
+      '\\varepsilon': 'ε',
+      '\\zeta': 'ζ', '\\Zeta': 'Ζ',
+      '\\eta': 'η', '\\Eta': 'Η',
+      '\\theta': 'θ', '\\Theta': 'Θ',
+      '\\vartheta': 'ϑ',
+      '\\iota': 'ι', '\\Iota': 'Ι',
+      '\\kappa': 'κ', '\\Kappa': 'Κ',
+      '\\lambda': 'λ', '\\Lambda': 'Λ',
+      '\\mu': 'μ', '\\Mu': 'Μ',
+      '\\nu': 'ν', '\\Nu': 'Ν',
+      '\\xi': 'ξ', '\\Xi': 'Ξ',
+      '\\omicron': 'ο', '\\Omicron': 'Ο',
+      '\\pi': 'π', '\\Pi': 'Π',
+      '\\rho': 'ρ', '\\Rho': 'Ρ',
+      '\\sigma': 'σ', '\\Sigma': 'Σ',
+      '\\tau': 'τ', '\\Tau': 'Τ',
+      '\\upsilon': 'υ', '\\Upsilon': 'Υ',
+      '\\phi': 'φ', '\\Phi': 'Φ',
+      '\\varphi': 'ϕ',
+      '\\chi': 'χ', '\\Chi': 'Χ',
+      '\\psi': 'ψ', '\\Psi': 'Ψ',
+      '\\omega': 'ω', '\\Omega': 'Ω'
+    };
+
+    // 数学运算符和符号
+    const mathSymbols = {
+      // 关系符号
+      '\\leq': '≤', '\\le': '≤',
+      '\\geq': '≥', '\\ge': '≥',
+      '\\neq': '≠', '\\ne': '≠',
+      '\\approx': '≈',
+      '\\equiv': '≡',
+      '\\sim': '∼',
+      '\\simeq': '≃',
+      '\\cong': '≅',
+      '\\propto': '∝',
+      '\\ll': '≪',
+      '\\gg': '≫',
+      '\\subset': '⊂',
+      '\\supset': '⊃',
+      '\\subseteq': '⊆',
+      '\\supseteq': '⊇',
+      '\\in': '∈',
+      '\\notin': '∉',
+      '\\ni': '∋',
+      '\\emptyset': '∅',
+
+      // 箭头
+      '\\rightarrow': '→', '\\to': '→',
+      '\\leftarrow': '←',
+      '\\leftrightarrow': '↔',
+      '\\Rightarrow': '⇒',
+      '\\Leftarrow': '⇐',
+      '\\Leftrightarrow': '⇔',
+      '\\uparrow': '↑',
+      '\\downarrow': '↓',
+      '\\mapsto': '↦',
+
+      // 运算符
+      '\\times': '×',
+      '\\div': '÷',
+      '\\pm': '±',
+      '\\mp': '∓',
+      '\\cdot': '·',
+      '\\ast': '∗',
+      '\\star': '⋆',
+      '\\circ': '∘',
+      '\\bullet': '•',
+      '\\oplus': '⊕',
+      '\\ominus': '⊖',
+      '\\otimes': '⊗',
+      '\\odot': '⊙',
+      '\\oslash': '⊘',
+      '\\cup': '∪',
+      '\\cap': '∩',
+      '\\vee': '∨',
+      '\\wedge': '∧',
+
+      // 微积分
+      '\\partial': '∂',
+      '\\nabla': '∇',
+      '\\infty': '∞',
+      '\\int': '∫',
+      '\\iint': '∬',
+      '\\iiint': '∭',
+      '\\oint': '∮',
+      '\\sum': '∑',
+      '\\prod': '∏',
+      '\\coprod': '∐',
+
+      // 逻辑符号
+      '\\forall': '∀',
+      '\\exists': '∃',
+      '\\nexists': '∄',
+      '\\neg': '¬',
+      '\\lnot': '¬',
+      '\\land': '∧',
+      '\\lor': '∨',
+      '\\implies': '⇒',
+      '\\iff': '⇔',
+
+      // 其他符号
+      '\\angle': '∠',
+      '\\degree': '°',
+      '\\prime': '′',
+      '\\dprime': '″',
+      '\\infty': '∞',
+      '\\aleph': 'ℵ',
+      '\\hbar': 'ℏ',
+      '\\ell': 'ℓ',
+      '\\wp': '℘',
+      '\\Re': 'ℜ',
+      '\\Im': 'ℑ',
+      '\\bot': '⊥',
+      '\\top': '⊤',
+      '\\perp': '⊥',
+      '\\parallel': '∥',
+      '\\triangle': '△',
+      '\\square': '□',
+      '\\checkmark': '✓',
+
+      // 特殊函数和文本
+      '\\dots': '…',
+      '\\ldots': '…',
+      '\\cdots': '⋯',
+      '\\vdots': '⋮',
+      '\\ddots': '⋱',
+
+      // 括号（虽然通常不需要转换，但有些特殊情况）
+      '\\langle': '⟨',
+      '\\rangle': '⟩',
+      '\\lfloor': '⌊',
+      '\\rfloor': '⌋',
+      '\\lceil': '⌈',
+      '\\rceil': '⌉',
+    };
+
+    // 上下标简化处理
+    // 将 ^{...} 和 _{...} 简化为 ^(...) 和 _(...) 以便阅读
+    result = result.replace(/\^{([^}]+)}/g, '^($1)');
+    result = result.replace(/_{([^}]+)}/g, '_($1)');
+
+    // 分数简化
+    result = result.replace(/\\frac{([^}]+)}{([^}]+)}/g, '($1)/($2)');
+
+    // 平方根
+    result = result.replace(/\\sqrt{([^}]+)}/g, '√($1)');
+    result = result.replace(/\\sqrt\[(\d+)\]{([^}]+)}/g, '[$1]√($2)');
+
+    // 替换希腊字母
+    Object.keys(greekLetters).forEach(latex => {
+      const regex = new RegExp(latex.replace(/\\/g, '\\\\'), 'g');
+      result = result.replace(regex, greekLetters[latex]);
+    });
+
+    // 替换数学符号
+    Object.keys(mathSymbols).forEach(latex => {
+      const regex = new RegExp(latex.replace(/\\/g, '\\\\'), 'g');
+      result = result.replace(regex, mathSymbols[latex]);
+    });
+
+    // 移除常见的LaTeX命令（保留内容）
+    result = result.replace(/\\text{([^}]+)}/g, '$1');
+    result = result.replace(/\\mathrm{([^}]+)}/g, '$1');
+    result = result.replace(/\\mathbf{([^}]+)}/g, '$1');
+    result = result.replace(/\\mathit{([^}]+)}/g, '$1');
+    result = result.replace(/\\mathcal{([^}]+)}/g, '$1');
+    result = result.replace(/\\mathbb{([^}]+)}/g, '$1');
+
+    // 移除对齐和换行命令
+    result = result.replace(/\\\\(?:\[[^\]]*\])?/g, '\n');
+    result = result.replace(/&/g, ' ');
+
+    // 移除空格命令
+    result = result.replace(/\\,/g, ' ');
+    result = result.replace(/\\;/g, ' ');
+    result = result.replace(/\\quad/g, '  ');
+    result = result.replace(/\\qquad/g, '    ');
+    result = result.replace(/\\ /g, ' ');
+
+    // 移除多余的花括号
+    result = result.replace(/{([^{}]+)}/g, '$1');
+
+    // 清理多余空格
+    result = result.replace(/\s+/g, ' ').trim();
+
+    return result;
   }
 
   /**
