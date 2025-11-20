@@ -166,6 +166,12 @@
         "pdf": "PDF Document",
         "pdfDesc": "Export as searchable plain text PDF (images not supported)"
       },
+      "pageFormat": {
+        "title": "Page Format",
+        "standard": "- International standard",
+        "northAmerica": "- North American standard",
+        "supernote": "- E-ink optimized"
+      },
       "scope": {
         "title": "Export Scope",
         "current": "Current Timeline File",

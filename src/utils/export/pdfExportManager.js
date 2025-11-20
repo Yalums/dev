@@ -32,6 +32,33 @@ import {
   parseInlineMarkdown
 } from './pdfContentRenderers';
 
+/**
+ * 获取页面尺寸配置
+ * @param {string} format - 页面格式 ('a4', 'letter', 'supernote')
+ * @returns {object} - 页面尺寸 { width, height, name }
+ */
+function getPageDimensions(format) {
+  const formats = {
+    a4: {
+      width: 210,   // mm
+      height: 297,  // mm
+      name: 'A4'
+    },
+    letter: {
+      width: 215.9, // 8.5 inches
+      height: 279.4, // 11 inches
+      name: 'Letter'
+    },
+    supernote: {
+      width: 227,   // mm (Supernote Manta 10.7")
+      height: 303,  // mm
+      name: 'Supernote Manta'
+    }
+  };
+
+  return formats[format] || formats.a4;
+}
+
 // 导入文本和页面助手
 import {
   cleanText,
@@ -110,13 +137,22 @@ export class PDFExportManager {
       includeTools: config.includeTools ?? true,
       includeCitations: config.includeCitations ?? true,
       highQuality: config.highQuality ?? false,
+      pageFormat: config.pageFormat || 'a4',
       ...config
     };
+
+    // 获取页面尺寸
+    const pageDimensions = getPageDimensions(this.config.pageFormat);
+    console.log(`[PDF导出] 使用页面格式: ${pageDimensions.name} (${pageDimensions.width}mm × ${pageDimensions.height}mm)`);
+
+    // 更新 PDF_STYLES 的页面尺寸
+    PDF_STYLES.PAGE_WIDTH = pageDimensions.width;
+    PDF_STYLES.PAGE_HEIGHT = pageDimensions.height;
 
     this.pdf = new jsPDF({
       orientation: 'portrait',
       unit: 'mm',
-      format: 'a4',
+      format: [pageDimensions.width, pageDimensions.height],
       compress: true
     });
 
