@@ -168,8 +168,8 @@ export class PDFExportManager {
         console.warn('[PDF导出] 中文字体加载失败，将使用默认字体');
       } else {
         const fontType = this.isSystemFont ? '系统字体' : '项目字体';
-        console.log(\`[PDF导出] 中文字体加载成功: \${this.chineseFontName} (\${fontType})\`);
-        console.log(\`[PDF导出] 可用字体变体: \${this.availableFontWeights.join(', ')}\`);
+        console.log(`[PDF导出] 中文字体加载成功: ${this.chineseFontName} (${fontType})`);
+        console.log(`[PDF导出] 可用字体变体: ${this.availableFontWeights.join(', ')}`);
       }
     } catch (error) {
       console.error('[PDF导出] 字体加载异常:', error);
@@ -259,10 +259,10 @@ export class PDFExportManager {
     this.pdf.setTextColor(...PDF_STYLES.COLOR_TIMESTAMP);
 
     const lines = [];
-    if (meta.platform) lines.push(\`Platform: \${meta.platform}\`);
-    if (meta.created_at) lines.push(\`Created: \${meta.created_at}\`);
-    if (meta.updated_at) lines.push(\`Updated: \${meta.updated_at}\`);
-    lines.push(\`Exported: \${DateTimeUtils.formatDateTime(new Date())}\`);
+    if (meta.platform) lines.push(`Platform: ${meta.platform}`);
+    if (meta.created_at) lines.push(`Created: ${meta.created_at}`);
+    if (meta.updated_at) lines.push(`Updated: ${meta.updated_at}`);
+    lines.push(`Exported: ${DateTimeUtils.formatDateTime(new Date())}`);
 
     const context = this.getContext();
     lines.forEach(line => {
@@ -340,11 +340,11 @@ export class PDFExportManager {
     this.pdf.setTextColor(...color);
 
     const senderLabel = message.sender === 'human' ? 'Human' : 'Assistant';
-    const label = \`\${index}. \${senderLabel}\`;
+    const label = `${index}. ${senderLabel}`;
 
     let finalLabel = label;
     if (message.branchInfo?.isBranchPoint) {
-      const branchMarker = \` [Branch \${message.branchInfo.childCount}]\`;
+      const branchMarker = ` [Branch ${message.branchInfo.childCount}]`;
       finalLabel = label + branchMarker;
     }
 
@@ -403,7 +403,7 @@ export class PDFExportManager {
     const platform = this.getPlatformPrefix(meta.platform);
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
     const title = (meta.name || 'conversation').substring(0, 30).replace(/[^a-zA-Z0-9\u4e00-\u9fa5]/g, '_');
-    return \`\${platform}_\${title}_\${timestamp}.pdf\`;
+    return `${platform}_${title}_${timestamp}.pdf`;
   }
 
   getPlatformPrefix(platform) {
