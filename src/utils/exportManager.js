@@ -578,7 +578,8 @@ export async function handleExport({
           includeArtifacts: exportOptions.includeArtifacts,
           includeTimestamps: exportOptions.includeTimestamps,
           includeTools: exportOptions.includeTools,
-          includeCitations: exportOptions.includeCitations
+          includeCitations: exportOptions.includeCitations,
+          pageFormat: exportOptions.pageFormat || 'a4'  // 传递页面格式
         }
       );
     }

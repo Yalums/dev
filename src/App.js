@@ -1393,9 +1393,9 @@ function App() {
         </>
       )}
 
-      {/* PDF 字体加载状态通知 */}
-      {fontLoadingStatus.isLoading && (
-        <div className="font-loading-notification">
+      {/* PDF 字体加载状态通知 - 已移除，改为静默加载 */}
+      {false && fontLoadingStatus.isLoading && (
+        <div className="font-loading-notification" style={{ display: 'none' }}>
           <div className="font-loading-content">
             <div className="font-loading-text">
               <span className="loading-icon">⏳</span>
@@ -1414,8 +1414,8 @@ function App() {
         </div>
       )}
 
-      {fontLoadingStatus.error && (
-        <div className="font-loading-notification error">
+      {false && fontLoadingStatus.error && (
+        <div className="font-loading-notification error" style={{ display: 'none' }}>
           <div className="font-loading-content">
             <div className="font-loading-text">
               <span className="loading-icon">⚠️</span>

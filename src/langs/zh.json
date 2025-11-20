@@ -188,6 +188,12 @@
         "pdf": "PDF 文档",
         "pdfDesc": "导出为可搜索的纯文本 PDF（图片无法显示）"
       },
+      "pageFormat": {
+        "title": "页面格式",
+        "standard": "- 国际标准",
+        "northAmerica": "- 北美标准",
+        "supernote": "- 电子纸优化"
+      },
       "screenshot": {
         "title": "截图设置",
         "heightLimit": "单张高度限制",
