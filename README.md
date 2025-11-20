@@ -2,7 +2,27 @@
 
 [**阅读中文文档**](https://github.com/Yalums/lyra-exporter/blob/main/README_zh.md)
 
-**A personal project co-created with Claude.** This is a user-friendly, feature-rich tool designed to help you manage and export conversations from AI platforms. Filter through hundreds of conversations to find exactly what you need—from images and thinking processes to attachments, Artifacts, and tool call details.
+**A personal project co-created with Claude.** Lyra Exporter is not just a “backup tool” but a private, permanent AI knowledge-base retriever. It solves the pain of **finding and recreating** past insights, not merely storing them. Load hundreds of conversations, surface hidden branches, and revive the exact code draft or idea you thought was lost.
+
+## Core Positioning: Your Second Brain
+
+- Go beyond linear chat history: reconstruct full conversation trees (including branches you overwrote) so you can revisit the real creative process.
+- Retrieve, don’t just archive: global, cross-session search digs into visible messages and “ghost” branches to recover thinking steps, code drafts, and attachments.
+- Trust by design: runs locally with browser companion script; data stays with you.
+
+## Human-Only Advantages (人无我有)
+
+- **Branch Tree + Ghost Content Retrieval**: Visualize every fork and revive discarded branches; find code or ideas even if you replaced them months ago.
+- **Cross-Session Needle-in-a-Haystack Search**: Load hundreds of JSON exports at once and fuzzy-search across all sessions, no need to remember which day or chat a phrase lived in.
+
+## Polished to the Pixel (人有我优)
+
+- **High-Fidelity Rendering**: Inline/block LaTeX renders cleanly; Claude Artifacts/OpenAI Canvas kept with UI context; attachments, generated images, and tool-call params are preserved and packaged to avoid link rot.
+- **Export Flexibility for Real Workflows**: Obsidian/Notion-friendly Markdown; high-quality PDF and long screenshots for sharing complete reasoning flows; SillyTavern-formatted roleplay exports that keep context and character setup.
+
+## Future Vision
+
+- **Local Semantic Search**: Move from keyword match to intent understanding (“that Python async chat” or “the blue chart”). Planned: vector search plus attachment text extraction and OCR to break format barriers.
 
 ## Features
 

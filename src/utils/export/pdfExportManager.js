@@ -59,6 +59,7 @@ export class PDFExportManager {
     this.useChineseFont = false; // 是否成功加载了中文字体
     this.chineseFontName = 'helvetica'; // 当前使用的字体名称
     this.availableFontWeights = []; // 可用的字体变体 (normal, bold, light 等)
+    this.isSystemFont = false; // 是否使用系统字体
     this.meta = null; // 保存元数据用于页脚
     this.exportDate = null; // 导出时间
     this.messageAnchors = []; // 保存每条消息的位置信息用于目录链接和书签
@@ -125,6 +126,91 @@ export class PDFExportManager {
   }
 
   /**
+   * 安全地获取文本宽度，处理字体元数据缺失的情况
+   * @param {string} text - 要测量的文本
+   * @returns {number} - 文本宽度
+   */
+  safeGetTextWidth(text) {
+    if (!text || typeof text !== 'string') {
+      return 0;
+    }
+
+    try {
+      // 检查当前字体是否有 Unicode 元数据
+      const font = this.pdf.getFont();
+      if (!font.metadata || !font.metadata.Unicode) {
+        const currentStyle = font.fontStyle || 'normal';
+        console.warn(`[PDF导出] 当前字体 (${currentStyle}) 缺少 Unicode 元数据`);
+
+        // 只在非normal字体时回退
+        if (currentStyle !== 'normal') {
+          console.log('[PDF导出] 回退到 normal 字体');
+          this.safeSetFont(this.chineseFontName, 'normal');
+          // 重新尝试获取宽度
+          return this.pdf.getTextWidth(text);
+        } else {
+          // normal字体也有问题，使用近似值
+          console.warn('[PDF导出] normal 字体也缺少元数据，使用近似计算');
+          const fontSize = this.pdf.getFontSize();
+          return text.length * fontSize * 0.5;
+        }
+      }
+
+      return this.pdf.getTextWidth(text);
+    } catch (error) {
+      console.error('[PDF导出] getTextWidth 失败:', error);
+      // 如果失败，使用近似值：字符数 * 字体大小 * 0.5
+      const fontSize = this.pdf.getFontSize();
+      return text.length * fontSize * 0.5;
+    }
+  }
+
+  /**
+   * 安全地渲染文本，自动处理边界
+   * @param {string} text - 要渲染的文本
+   * @param {number} x - X 坐标
+   * @param {number} y - Y 坐标
+   * @param {number} maxWidth - 最大宽度（可选）
+   */
+  safeRenderText(text, x, y, maxWidth = null) {
+    if (!text || typeof text !== 'string') {
+      return;
+    }
+
+    const cleanedText = this.cleanText(text);
+    if (!cleanedText) {
+      return;
+    }
+
+    // 如果指定了 maxWidth，检查文本宽度
+    if (maxWidth) {
+      const textWidth = this.safeGetTextWidth(cleanedText);
+      if (textWidth > maxWidth) {
+        // 文本过长，进行截断并添加省略号
+        console.warn('[PDF导出] 文本过长，将被截断:', cleanedText.substring(0, 50));
+        // 尝试使用 splitTextToSize 拆分（只渲染第一行）
+        try {
+          const lines = this.pdf.splitTextToSize(cleanedText, maxWidth);
+          if (lines.length > 0) {
+            this.pdf.text(lines[0], x, y);
+          }
+        } catch (error) {
+          // 如果失败，尝试简单截断
+          let truncated = cleanedText;
+          while (this.safeGetTextWidth(truncated + '...') > maxWidth && truncated.length > 0) {
+            truncated = truncated.substring(0, truncated.length - 1);
+          }
+          this.pdf.text(truncated + '...', x, y);
+        }
+        return;
+      }
+    }
+
+    // 文本长度合适，直接渲染
+    this.pdf.text(cleanedText, x, y);
+  }
+
+  /**
    * 清理和标准化文本，防止编码问题
    * @param {string} text - 原始文本
    * @returns {string} - 清理后的文本
@@ -137,18 +223,96 @@ export class PDFExportManager {
     try {
       // 1. Unicode 标准化（NFC 模式）
       let cleaned = text.normalize('NFC');
-      
+
       // 2. 移除控制字符和不可打印字符（保留换行符和制表符）
       cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
-      
-      // 3. 处理特殊Unicode字符（可能导致jsPDF问题）
+
+      // 3. 处理常见的Latin连字（ligatures），将其转换回普通字符组合
+      const ligatureMap = {
+        '\uFB00': 'ff',    // ﬀ
+        '\uFB01': 'fi',    // ﬁ
+        '\uFB02': 'fl',    // ﬂ
+        '\uFB03': 'ffi',   // ﬃ
+        '\uFB04': 'ffl',   // ﬄ
+        '\uFB05': 'st',    // ﬅ
+        '\uFB06': 'st',    // ﬆ
+        '\u00C6': 'AE',    // Æ
+        '\u00E6': 'ae',    // æ
+        '\u0152': 'OE',    // Œ
+        '\u0153': 'oe',    // œ
+        '\u00DF': 'ss',    // ß
+        '\u1E9E': 'SS',    // ẞ
+      };
+
+      // 批量替换连字
+      for (const [ligature, replacement] of Object.entries(ligatureMap)) {
+        cleaned = cleaned.replace(new RegExp(ligature, 'g'), replacement);
+      }
+
+      // 4. 处理特殊Unicode字符（可能导致jsPDF问题）
       // 移除零宽字符
       cleaned = cleaned.replace(/[\u200B-\u200F\u2060\uFEFF]/g, '');
-      
-      // 4. 处理特殊的拉丁字符和符号（可能导致编码问题）
-      // 这些字符在PDF中可能显示不正确
-      cleaned = cleaned.replace(/[\uE000-\uF8FF]/g, ''); // 私人使用区
-      
+
+      // 5. 注意：不再移除私人使用区字符，因为某些字体可能使用这些区域
+      // 如果确实需要移除，应该更精确地处理
+      // cleaned = cleaned.replace(/[\uE000-\uF8FF]/g, ''); // 注释掉这行，防止删除有用的特殊字符
+
+      // 6. 标准化引号和标点符号（修复乱码问题）
+      // 将各种引号统一为标准ASCII引号或中文引号
+      const quoteMap = {
+        // 英文引号标准化
+        '\u201C': '"',  // " (左双引号) -> "
+        '\u201D': '"',  // " (右双引号) -> "
+        '\u2018': "'",  // ' (左单引号) -> '
+        '\u2019': "'",  // ' (右单引号) -> '
+        '\u2033': '"',  // ″ (双撇号) -> "
+        '\u2032': "'",  // ′ (单撇号) -> '
+
+        // 中文引号保持原样（字体应该支持）
+        // '\u300C': '「', // 「
+        // '\u300D': '」', // 」
+        // '\u300E': '『', // 『
+        // '\u300F': '』', // 』
+
+        // 其他标点标准化
+        '\u2014': '--', // — (em dash) -> --
+        '\u2013': '-',  // – (en dash) -> -
+        '\u2026': '...', // … (省略号) -> ...
+        '\u2022': '·',  // • (项目符号) -> ·
+        '\u00B7': '·',  // · (中点)
+
+        // 星号标准化
+        '\u2217': '*',  // ∗ (星号运算符) -> *
+        '\u2731': '*',  // ✱ (粗星号) -> *
+        '\u2732': '*',  // ✲ (开放中心星号) -> *
+        '\u2605': '*',  // ★ (黑色星号) -> *
+        '\u2606': '*',  // ☆ (白色星号) -> *
+
+        // 加号标准化
+        '\u2795': '+',  // ➕ (粗加号) -> +
+        '\uFF0B': '+',  // ＋ (全角加号) -> +
+      };
+
+      // 批量替换
+      for (const [from, to] of Object.entries(quoteMap)) {
+        cleaned = cleaned.replace(new RegExp(from, 'g'), to);
+      }
+
+      // 7. 处理全角字符转半角（可选，根据需要）
+      // 全角数字和字母转半角
+      cleaned = cleaned.replace(/[\uFF10-\uFF19]/g, (ch) => {
+        return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+      });
+      cleaned = cleaned.replace(/[\uFF21-\uFF3A]/g, (ch) => {
+        return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+      });
+      cleaned = cleaned.replace(/[\uFF41-\uFF5A]/g, (ch) => {
+        return String.fromCharCode(ch.charCodeAt(0) - 0xFEE0);
+      });
+
+      // 全角空格转半角
+      cleaned = cleaned.replace(/\u3000/g, ' ');
+
       return cleaned;
     } catch (error) {
       console.error('[PDF导出] 文本清理失败:', error);
@@ -199,18 +363,28 @@ export class PDFExportManager {
       this.useChineseFont = fontLoadResult.success;
       this.chineseFontName = fontLoadResult.fontName;
       this.availableFontWeights = fontLoadResult.availableWeights || [];
+      this.isSystemFont = fontLoadResult.isSystemFont || false;
 
       if (!this.useChineseFont) {
         console.warn('[PDF导出] 中文字体加载失败，将使用默认字体（中文可能显示为方框）');
+        if (fontLoadResult.systemFontAvailable) {
+          console.warn('[PDF导出] 提示：检测到系统有中文字体，但无法在浏览器环境中直接使用');
+          console.warn('[PDF导出] 建议：请确保项目 public/fonts/ 目录下有中文字体文件');
+        }
       } else {
-        console.log(`[PDF导出] 中文字体加载成功: ${this.chineseFontName}`);
+        const fontType = this.isSystemFont ? '系统字体' : '项目字体';
+        console.log(`[PDF导出] 中文字体加载成功: ${this.chineseFontName} (${fontType})`);
         console.log(`[PDF导出] 可用字体变体: ${this.availableFontWeights.join(', ')}`);
+        if (fontLoadResult.systemFontInfo) {
+          console.log(`[PDF导出] 系统字体信息: ${fontLoadResult.systemFontInfo.fontName}`);
+        }
       }
     } catch (error) {
       console.error('[PDF导出] 字体加载异常:', error);
       this.useChineseFont = false;
       this.chineseFontName = 'helvetica';
       this.availableFontWeights = [];
+      this.isSystemFont = false;
     }
 
     // 无论字体是否加载成功，都设置一个默认字体
@@ -221,28 +395,27 @@ export class PDFExportManager {
     this.renderMetadata(meta);
     this.currentY += PDF_STYLES.SECTION_SPACING;
 
-    // 如果有多于1条消息，预留目录页
-    const hasTOC = messages.length > 1;
-    let tocPageNumber = 0;
-    if (hasTOC) {
-      this.pdf.addPage();
-      tocPageNumber = this.pdf.internal.getCurrentPageInfo().pageNumber;
-      this.currentY = PDF_STYLES.MARGIN_TOP;
-    }
-
     // 渲染消息
     for (let i = 0; i < messages.length; i++) {
-      // 如果有目录，第一条消息需要新开一页
-      if (hasTOC && i === 0) {
+      const message = messages[i];
+
+      // 分页策略：一轮对话（用户消息+AI回复）结束后再换页
+      // 只有当前是用户消息且不是第一条时才换页，这样一轮对话会在同一页或连续页面上
+      if (i > 0 && message.sender === 'human') {
         this.pdf.addPage();
         this.currentY = PDF_STYLES.MARGIN_TOP;
       }
-      this.renderMessage(messages[i], i + 1);
+
+      this.renderMessage(message, i + 1);
     }
 
-    // 生成目录（带页码链接）
+    // 生成目录（放在文档最后，避免页码混乱）
+    const hasTOC = messages.length > 1;
     if (hasTOC) {
-      console.log('[PDF导出] 生成目录...');
+      console.log('[PDF导出] 生成目录（位于文档末尾）...');
+      this.pdf.addPage();
+      const tocPageNumber = this.pdf.internal.getCurrentPageInfo().pageNumber;
+      this.currentY = PDF_STYLES.MARGIN_TOP;
       this.renderTOCWithLinks(tocPageNumber, messages);
     }
 
@@ -391,7 +564,7 @@ export class PDFExportManager {
       this.pdf.setTextColor(...color);
 
       // 计算页码位置（右对齐）
-      const pageNumWidth = this.pdf.getTextWidth(pageNum);
+      const pageNumWidth = this.safeGetTextWidth(pageNum);
       const pageNumX = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - pageNumWidth;
 
       // 渲染条目（作为链接）
@@ -614,7 +787,7 @@ export class PDFExportManager {
       this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
       this.pdf.setTextColor(100, 100, 100);
       const labelText = cleanLanguage.toUpperCase();
-      const labelWidth = this.pdf.getTextWidth(labelText) + 4;
+      const labelWidth = this.safeGetTextWidth(labelText) + 4;
       this.pdf.setFillColor(220, 220, 220);
       this.pdf.roundedRect(
         PDF_STYLES.MARGIN_LEFT,
@@ -730,12 +903,43 @@ export class PDFExportManager {
         this.pdf.text(lineNumStr, PDF_STYLES.MARGIN_LEFT + 1, this.currentY);
       }
 
-      // 渲染代码文本
-      this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
-      this.pdf.setTextColor(50, 50, 50);
+      // 渲染代码文本（支持 **粗体** 和 ### 标题）
       const safeLine = this.cleanText(text);
       if (safeLine !== null && safeLine !== undefined) {
-        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + lineNumberWidth + 2, this.currentY);
+        // 解析粗体和标题标记
+        const segments = this.parseCodeLineBold(safeLine);
+        const isHeading = segments.some(s => s.heading);
+
+        // 根据标题级别设置字号和颜色
+        if (isHeading) {
+          const level = segments[0].heading;
+          const headingSizes = [14, 13, 12, 11, 10, 10]; // H1-H6 字号
+          this.pdf.setFontSize(headingSizes[level - 1] || PDF_STYLES.FONT_SIZE_CODE);
+          this.pdf.setTextColor(20, 20, 20); // 深色
+        } else {
+          this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
+          this.pdf.setTextColor(50, 50, 50);
+        }
+
+        let currentX = PDF_STYLES.MARGIN_LEFT + lineNumberWidth + 2;
+
+        segments.forEach(segment => {
+          // 标题或粗体使用bold字体
+          if ((segment.heading || segment.bold) && this.availableFontWeights.includes('bold')) {
+            this.pdf.setFont(this.chineseFontName, 'bold');
+          } else {
+            // 使用普通字体（保持中文支持）
+            this.pdf.setFont(this.chineseFontName, 'normal');
+          }
+
+          this.pdf.text(segment.text, currentX, this.currentY);
+          currentX += this.safeGetTextWidth(segment.text);
+        });
+
+        // 恢复默认字体和字号
+        this.pdf.setFont(this.chineseFontName, 'normal');
+        this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_CODE);
+        this.pdf.setTextColor(50, 50, 50);
       }
       this.currentY += PDF_STYLES.LINE_HEIGHT;
     });
@@ -844,7 +1048,7 @@ export class PDFExportManager {
   }
 
   /**
-   * 渲染块级LaTeX公式（支持跨页）- 简化版
+   * 渲染块级LaTeX公式（支持跨页）- 改进版
    * @param {string} latex - LaTeX公式内容
    */
   renderLatexBlock(latex) {
@@ -853,15 +1057,14 @@ export class PDFExportManager {
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
     const padding = 3;
 
-    // 清理并转换LaTeX符号
+    // 清理LaTeX
     const cleanLatex = this.cleanText(latex);
-    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
 
     // 渲染"Math"标签
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
     this.pdf.setTextColor(70, 130, 180);
     const labelText = 'MATH';
-    const labelWidth = this.pdf.getTextWidth(labelText) + 4;
+    const labelWidth = this.safeGetTextWidth(labelText) + 4;
     this.pdf.setFillColor(230, 240, 250);
     this.pdf.roundedRect(
       PDF_STYLES.MARGIN_LEFT,
@@ -875,15 +1078,33 @@ export class PDFExportManager {
     this.pdf.text(labelText, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
     this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
 
+    // 准备渲染内容：原始LaTeX + 转换后的Unicode（如果转换有意义）
+    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
+
+    // 判断转换是否有意义（如果转换后和原始差异不大，就只显示一个）
+    const conversionSignificant = renderedLatex !== cleanLatex &&
+                                   !cleanLatex.includes('\\frac') && // 分数转换后可读性差
+                                   renderedLatex.length < cleanLatex.length * 1.5;
+
+    // 构建显示文本
+    let displayText = '';
+    if (conversionSignificant) {
+      // 先显示转换后的版本（更易读）
+      displayText = renderedLatex + '\n\n' + '原始LaTeX: ' + cleanLatex;
+    } else {
+      // 直接显示原始LaTeX（保留完整信息）
+      displayText = cleanLatex;
+    }
+
     // 处理公式文本
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
     this.pdf.setFont(this.chineseFontName);
 
     let formulaLines;
     try {
-      formulaLines = this.pdf.splitTextToSize(renderedLatex, maxWidth - 8);
+      formulaLines = this.pdf.splitTextToSize(displayText, maxWidth - 8);
     } catch (error) {
-      formulaLines = renderedLatex.split('\n');
+      formulaLines = displayText.split('\n');
     }
 
     // 逐行渲染
@@ -1026,7 +1247,7 @@ export class PDFExportManager {
   }
 
   /**
-   * 渲染行内LaTeX公式
+   * 渲染行内LaTeX公式 - 改进版
    * @param {string} latex - LaTeX公式内容
    * @param {number} maxWidth - 最大宽度
    */
@@ -1039,8 +1260,16 @@ export class PDFExportManager {
     // 设置行内公式样式
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
 
-    // 添加前缀和后缀标记
-    const formulaText = `⟨${renderedLatex}⟩`;
+    // 判断是否需要显示原始LaTeX（如果转换不够好）
+    let formulaText;
+    if (cleanLatex.includes('\\frac') || cleanLatex.includes('\\sqrt') ||
+        renderedLatex === cleanLatex || cleanLatex.length < 30) {
+      // 对于复杂公式或转换效果不好的，直接显示原始LaTeX
+      formulaText = `⟨${cleanLatex}⟩`;
+    } else {
+      // 对于简单公式，使用转换后的Unicode
+      formulaText = `⟨${renderedLatex}⟩`;
+    }
 
     // 使用特殊颜色标识数学公式
     this.pdf.setTextColor(70, 130, 180); // 蓝色
@@ -1197,7 +1426,7 @@ export class PDFExportManager {
 
     // 右侧显示页码
     const pageText = `${pageNumber} / ${totalPages}`;
-    const pageTextWidth = this.pdf.getTextWidth(pageText);
+    const pageTextWidth = this.safeGetTextWidth(pageText);
     this.pdf.text(pageText, PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - pageTextWidth, footerY);
 
     // 恢复原始设置
@@ -1262,17 +1491,19 @@ export class PDFExportManager {
     const parts = [];
     const elements = [];
 
-    // 1. 首先提取所有代码块
-    const codeBlockRegex = /```(\w*)\n([\s\S]*?)```/g;
+    // 1. 首先提取所有代码块（允许语言标识符后有空格）
+    const codeBlockRegex = /```([^\n]*?)\s*\n([\s\S]*?)```/g;
     let match;
     let lastIndex = 0;
 
     while ((match = codeBlockRegex.exec(text)) !== null) {
+      const language = (match[1] || '').trim(); // 清理语言标识符
+      console.log('[PDF导出] 发现代码块:', { language, contentLength: match[2].length });
       elements.push({
         start: match.index,
         end: match.index + match[0].length,
         type: 'code',
-        language: match[1] || '',
+        language: language,
         content: match[2]
       });
     }
@@ -1509,7 +1740,7 @@ export class PDFExportManager {
       return;
     }
 
-    const bulletWidth = this.pdf.getTextWidth(bullet + '  ');
+    const bulletWidth = this.safeGetTextWidth(bullet + '  ');
     const textWidth = maxWidth - bulletWidth;
     const textX = PDF_STYLES.MARGIN_LEFT + bulletWidth;
 
@@ -1517,19 +1748,18 @@ export class PDFExportManager {
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
     this.pdf.text(bullet, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
 
-    // 渲染文本
+    // 解析并渲染带格式的文本
     try {
-      const lines = this.pdf.splitTextToSize(text, textWidth);
-      lines.forEach((l, idx) => {
-        if (idx > 0) {
-          this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
-        }
-        const cleanLine = this.cleanText(l);
-        if (cleanLine && cleanLine.trim().length > 0) {
-          this.pdf.text(cleanLine, textX, this.currentY);
-        }
-        this.currentY += PDF_STYLES.LINE_HEIGHT;
-      });
+      // 解析行内markdown格式（粗体、斜体等）
+      const segments = this.parseInlineMarkdown(text);
+
+      // 使用renderInlineSegments渲染，但需要调整左边距
+      const originalMarginLeft = PDF_STYLES.MARGIN_LEFT;
+      PDF_STYLES.MARGIN_LEFT = textX; // 临时调整左边距以对齐列表文本
+
+      this.renderInlineSegments(segments, textWidth);
+
+      PDF_STYLES.MARGIN_LEFT = originalMarginLeft; // 恢复原始边距
     } catch (error) {
       console.error('[PDF导出] 列表渲染失败:', error);
       this.pdf.text(text, textX, this.currentY);
@@ -1567,10 +1797,10 @@ export class PDFExportManager {
       { type: 'code', regex: /`([^`]+)`/g },              // 行内代码
       { type: 'bold-italic', regex: /\*\*\*(.+?)\*\*\*/g }, // 粗斜体
       { type: 'bold-italic', regex: /___(.+?)___/g },     // 粗斜体
-      { type: 'bold', regex: /\*\*(.+?)\*\*/g },          // 粗体
-      { type: 'bold', regex: /__(.+?)__/g },              // 粗体
-      { type: 'italic', regex: /\*(.+?)\*/g },            // 斜体
-      { type: 'italic', regex: /_(.+?)_/g },              // 斜体
+      { type: 'bold', regex: /\*\*([^*]+?)\*\*/g },       // 粗体（改进：不匹配*字符）
+      { type: 'bold', regex: /__([^_]+?)__/g },           // 粗体（改进：不匹配_字符）
+      { type: 'italic', regex: /\*([^*]+?)\*/g },         // 斜体（改进：不匹配*字符）
+      { type: 'italic', regex: /_([^_]+?)_/g },           // 斜体（改进：不匹配_字符）
       { type: 'link', regex: /\[([^\]]+)\]\(([^)]+)\)/g } // 链接
     ];
 
@@ -1584,9 +1814,14 @@ export class PDFExportManager {
           type: pattern.type,
           start: match.index,
           end: regex.lastIndex,
-          text: match[1],
-          url: match[2] // 仅用于链接
+          text: this.cleanText(match[1]),  // 清理文本，防止特殊字符导致乱码
+          url: match[2], // 仅用于链接
+          rawText: match[1] // 保留原始文本用于调试
         });
+        // 调试：记录找到的格式
+        if (pattern.type === 'bold') {
+          console.log(`[PDF导出] 发现粗体文本 [${match.index}-${regex.lastIndex}]:`, match[1]);
+        }
       }
     });
 
@@ -1602,6 +1837,8 @@ export class PDFExportManager {
       );
       if (!overlaps) {
         filteredMatches.push(match);
+      } else if (match.type === 'bold') {
+        console.warn(`[PDF导出] ⚠ 粗体文本被过滤（重叠）[${match.start}-${match.end}]:`, match.rawText);
       }
     });
 
@@ -1612,14 +1849,14 @@ export class PDFExportManager {
       if (match.start > lastEnd) {
         segments.push({
           type: 'normal',
-          text: text.substring(lastEnd, match.start)
+          text: this.cleanText(text.substring(lastEnd, match.start))  // 清理普通文本
         });
       }
 
       // 添加格式化文本
       segments.push({
         type: match.type,
-        text: match.text,
+        text: match.text,  // 已在上面清理过
         url: match.url
       });
 
@@ -1630,7 +1867,7 @@ export class PDFExportManager {
     if (lastEnd < text.length) {
       segments.push({
         type: 'normal',
-        text: text.substring(lastEnd)
+        text: this.cleanText(text.substring(lastEnd))  // 清理剩余文本
       });
     }
 
@@ -1638,7 +1875,160 @@ export class PDFExportManager {
     if (segments.length === 0) {
       segments.push({
         type: 'normal',
-        text: text
+        text: this.cleanText(text)  // 清理整个文本
+      });
+    }
+
+    // 清理未闭合的Markdown标记（如单独的 ** 或 * ）
+    segments.forEach(segment => {
+      if (segment.type === 'normal' && segment.text) {
+        // 移除未闭合的粗体标记
+        segment.text = segment.text.replace(/\*\*(?!\*)/g, '');  // 移除单独的 **
+        segment.text = segment.text.replace(/(?<!\*)\*\*/g, '');  // 移除单独的 **
+        // 移除未闭合的斜体标记
+        segment.text = segment.text.replace(/(?<!\*)\*(?!\*)/g, '');  // 移除单独的 *
+        // 移除未闭合的下划线标记
+        segment.text = segment.text.replace(/(?<!_)__(?!_)/g, '');  // 移除单独的 __
+        segment.text = segment.text.replace(/(?<!_)_(?!_)/g, '');  // 移除单独的 _
+      }
+    });
+
+    return segments;
+  }
+
+  /**
+   * 应用中文标点避头尾规则
+   * @param {string[]} lines - 换行后的文本行数组
+   * @returns {string[]} - 调整后的文本行数组
+   */
+  applyCJKPunctuationRules(lines) {
+    if (!lines || lines.length <= 1) return lines;
+
+    // 不能出现在行首的标点（避头）
+    const noLineStart = /^[。，、；：！？）》」』】"',.;:!?)}\]]/;
+    // 不能出现在行尾的标点（避尾）
+    const noLineEnd = /[（《「『【"'(\[{]$/;
+
+    const result = [];
+    let prevLine = lines[0];
+
+    for (let i = 1; i < lines.length; i++) {
+      const currentLine = lines[i];
+
+      // 检查当前行开头是否有不能在行首的标点
+      if (noLineStart.test(currentLine)) {
+        // 将标点移到上一行末尾
+        const punct = currentLine[0];
+        prevLine = prevLine + punct;
+        lines[i] = currentLine.substring(1);
+        continue;
+      }
+
+      // 检查上一行结尾是否有不能在行尾的标点
+      if (noLineEnd.test(prevLine)) {
+        // 将标点移到当前行开头
+        const punct = prevLine[prevLine.length - 1];
+        prevLine = prevLine.substring(0, prevLine.length - 1);
+        lines[i] = punct + currentLine;
+      }
+
+      result.push(prevLine);
+      prevLine = lines[i];
+    }
+
+    result.push(prevLine);
+    return result;
+  }
+
+  /**
+   * 解析代码行中的格式标记（粗体、标题）
+   * 返回 [{text: string, bold: boolean, heading: number}]
+   */
+  parseCodeLineBold(line) {
+    const segments = [];
+
+    // 检查是否是标题行（### 开头）
+    const headingMatch = line.match(/^(#{1,6})\s+(.+)$/);
+    if (headingMatch) {
+      const level = headingMatch[1].length; // 标题级别（1-6）
+      const headingText = headingMatch[2];
+
+      // 标题文本仍然可以包含粗体
+      const boldRegex = /\*\*([^*]+?)\*\*/g;
+      let lastEnd = 0;
+      let match;
+
+      while ((match = boldRegex.exec(headingText)) !== null) {
+        if (match.index > lastEnd) {
+          segments.push({
+            text: headingText.substring(lastEnd, match.index),
+            bold: false,
+            heading: level
+          });
+        }
+        segments.push({
+          text: match[1],
+          bold: true,
+          heading: level
+        });
+        lastEnd = boldRegex.lastIndex;
+      }
+
+      if (lastEnd < headingText.length) {
+        segments.push({
+          text: headingText.substring(lastEnd),
+          bold: false,
+          heading: level
+        });
+      }
+
+      if (segments.length === 0) {
+        segments.push({
+          text: headingText,
+          bold: false,
+          heading: level
+        });
+      }
+
+      return segments;
+    }
+
+    // 不是标题，解析普通粗体
+    const boldRegex = /\*\*([^*]+?)\*\*/g;
+    let lastEnd = 0;
+    let match;
+
+    while ((match = boldRegex.exec(line)) !== null) {
+      // 添加普通文本
+      if (match.index > lastEnd) {
+        segments.push({
+          text: line.substring(lastEnd, match.index),
+          bold: false
+        });
+      }
+
+      // 添加粗体文本
+      segments.push({
+        text: match[1],
+        bold: true
+      });
+
+      lastEnd = boldRegex.lastIndex;
+    }
+
+    // 添加剩余文本
+    if (lastEnd < line.length) {
+      segments.push({
+        text: line.substring(lastEnd),
+        bold: false
+      });
+    }
+
+    // 如果没有匹配，返回整行
+    if (segments.length === 0) {
+      segments.push({
+        text: line,
+        bold: false
       });
     }
 
@@ -1659,18 +2049,103 @@ export class PDFExportManager {
 
       // 设置样式并测量宽度
       this.applySegmentStyle(segment.type);
-      const textWidth = this.pdf.getTextWidth(text);
+      const textWidth = this.safeGetTextWidth(text);
+      const availableWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT - currentX;
+
+      // 如果单个 segment 本身就超过可用宽度，需要拆分
+      if (textWidth > availableWidth && currentLineSegments.length === 0) {
+        // 这是新行的第一个 segment，但它太长了
+        // 尝试使用 splitTextToSize 拆分
+        try {
+          const maxSegmentWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
+          let splitLines = this.pdf.splitTextToSize(text, maxSegmentWidth);
+          // 应用中文标点避头尾规则
+          splitLines = this.applyCJKPunctuationRules(splitLines);
+
+          // 渲染除最后一行外的所有行
+          for (let i = 0; i < splitLines.length - 1; i++) {
+            this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+            currentLineSegments = [{
+              ...segment,
+              x: PDF_STYLES.MARGIN_LEFT,
+              text: splitLines[i]
+            }];
+            this.renderSegmentLine(currentLineSegments);
+            this.currentY += PDF_STYLES.LINE_HEIGHT;
+          }
+
+          // 最后一行准备与后续 segment 合并
+          const lastLine = splitLines[splitLines.length - 1];
+          const lastLineWidth = this.safeGetTextWidth(lastLine);
+          currentLineSegments = [{
+            ...segment,
+            x: PDF_STYLES.MARGIN_LEFT,
+            text: lastLine
+          }];
+          currentX = PDF_STYLES.MARGIN_LEFT + lastLineWidth;
+        } catch (error) {
+          console.warn('[PDF导出] 文本拆分失败，强制换行:', error);
+          // 如果拆分失败，直接渲染（可能会超出边界，但至少不会崩溃）
+          currentLineSegments.push({
+            ...segment,
+            x: currentX,
+            text: text
+          });
+          currentX += textWidth;
+        }
+        return;
+      }
 
       // 检查是否需要换行
       if (currentX + textWidth > PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_RIGHT && currentLineSegments.length > 0) {
+        // 先检查是否需要分页
+        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+
         // 渲染当前行
         this.renderSegmentLine(currentLineSegments);
         this.currentY += PDF_STYLES.LINE_HEIGHT;
-        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
 
         // 重置行状态
         currentX = PDF_STYLES.MARGIN_LEFT;
         currentLineSegments = [];
+
+        // 重新检查新行上这个 segment 是否超出边界
+        if (textWidth > maxWidth) {
+          // 即使在新行，segment 仍然太长，需要拆分
+          try {
+            let splitLines = this.pdf.splitTextToSize(text, maxWidth);
+            // 应用中文标点避头尾规则
+            splitLines = this.applyCJKPunctuationRules(splitLines);
+            for (let i = 0; i < splitLines.length - 1; i++) {
+              this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
+              const tempSegments = [{
+                ...segment,
+                x: PDF_STYLES.MARGIN_LEFT,
+                text: splitLines[i]
+              }];
+              this.renderSegmentLine(tempSegments);
+              this.currentY += PDF_STYLES.LINE_HEIGHT;
+            }
+            // 最后一行
+            const lastLine = splitLines[splitLines.length - 1];
+            const lastLineWidth = this.safeGetTextWidth(lastLine);
+            currentLineSegments = [{
+              ...segment,
+              x: PDF_STYLES.MARGIN_LEFT,
+              text: lastLine
+            }];
+            currentX = PDF_STYLES.MARGIN_LEFT + lastLineWidth;
+          } catch (error) {
+            console.warn('[PDF导出] 文本拆分失败:', error);
+            currentLineSegments.push({
+              ...segment,
+              x: currentX,
+              text: text
+            });
+            currentX += textWidth;
+          }
+          return;
+        }
       }
 
       // 添加到当前行
@@ -1684,6 +2159,7 @@ export class PDFExportManager {
 
     // 渲染最后一行
     if (currentLineSegments.length > 0) {
+      this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
       this.renderSegmentLine(currentLineSegments);
       this.currentY += PDF_STYLES.LINE_HEIGHT;
     }
@@ -1706,15 +2182,16 @@ export class PDFExportManager {
           url: segment.url || '#'
         });
         // 绘制下划线
-        const textWidth = this.pdf.getTextWidth(segment.text);
+        const textWidth = this.safeGetTextWidth(segment.text);
         this.pdf.line(segment.x, this.currentY + 0.5, segment.x + textWidth, this.currentY + 0.5);
       } else if (segment.type === 'code') {
         // 渲染行内代码（添加背景色）
-        const textWidth = this.pdf.getTextWidth(segment.text);
+        // 注意：字体和颜色已经在 applySegmentStyle 中设置，这里只添加背景
+        const textWidth = this.safeGetTextWidth(segment.text);
         const padding = 1;
         this.pdf.setFillColor(245, 245, 245);
         this.pdf.rect(segment.x - padding, this.currentY - 3, textWidth + padding * 2, 4, 'F');
-        this.pdf.setTextColor(220, 50, 50);
+        // 不要重新设置颜色和字体，使用 applySegmentStyle 中已设置的
         this.pdf.text(segment.text, segment.x, this.currentY);
       } else {
         // 普通文本
@@ -1732,15 +2209,25 @@ export class PDFExportManager {
 
     switch (type) {
       case 'bold':
+        console.log('[PDF导出] 应用粗体样式, 字体:', this.chineseFontName, '可用变体:', this.availableFontWeights);
         // 使用粗体字体（如果可用，否则自动回退）
-        this.safeSetFont(this.chineseFontName, 'bold');
+        const boldSuccess = this.safeSetFont(this.chineseFontName, 'bold');
+        console.log('[PDF导出] safeSetFont 返回:', boldSuccess);
+        if (!boldSuccess) {
+          // 如果粗体字体不可用，使用明显的视觉区分
+          console.warn('[PDF导出] 粗体字体不可用，使用视觉回退方案: 深蓝色 RGB(20,20,150) + 字体大小', PDF_STYLES.FONT_SIZE_BODY + 1);
+          // 使用深蓝色 + 增大字体来明显区分粗体
+          this.pdf.setTextColor(20, 20, 150); // 深蓝色，非常明显
+          this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY + 1); // 增加1pt，更明显
+        } else {
+          console.log('[PDF导出] 使用字体粗体变体');
+        }
         break;
       case 'italic':
-        // 使用斜体字体（如果可用，否则回退到 light 或 normal）
-        // 同时设置颜色以区分
-        const italicSuccess = this.safeSetFont(this.chineseFontName, 'italic');
-        if (!italicSuccess) {
-          // 如果没有斜体，用颜色区分
+        // 使用 light 字体表示斜体（中文字体通常没有真正的斜体）
+        const lightSuccess = this.safeSetFont(this.chineseFontName, 'light');
+        if (!lightSuccess) {
+          // 如果没有 light，用颜色区分
           this.pdf.setTextColor(70, 130, 180); // 蓝色表示强调
         }
         break;
@@ -1748,9 +2235,16 @@ export class PDFExportManager {
         // 粗斜体：尝试使用 bold，如果没有则用 normal + 颜色
         const boldItalicSuccess = this.safeSetFont(this.chineseFontName, 'bolditalic');
         if (!boldItalicSuccess) {
-          // 回退：使用 bold（如果有）+ 颜色
-          this.safeSetFont(this.chineseFontName, 'bold');
-          this.pdf.setTextColor(70, 130, 180); // 蓝色表示斜体
+          // 回退：尝试只用 bold
+          const boldOnlySuccess = this.safeSetFont(this.chineseFontName, 'bold');
+          if (!boldOnlySuccess) {
+            // bold 也不可用，使用深蓝色区分
+            this.pdf.setTextColor(30, 60, 120); // 深蓝色（粗体+斜体）
+            this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY + 0.5);
+          } else {
+            // bold 可用，添加颜色表示斜体
+            this.pdf.setTextColor(70, 130, 180); // 蓝色表示斜体
+          }
         }
         break;
       case 'code':
@@ -1759,7 +2253,11 @@ export class PDFExportManager {
         this.pdf.setTextColor(220, 50, 50);
         break;
       case 'link':
-        this.safeSetFont(this.chineseFontName, 'normal');
+        // 使用 light 字体和蓝色表示链接
+        const linkLightSuccess = this.safeSetFont(this.chineseFontName, 'light');
+        if (!linkLightSuccess) {
+          this.safeSetFont(this.chineseFontName, 'normal');
+        }
         this.pdf.setTextColor(0, 102, 204); // 蓝色
         break;
       default:

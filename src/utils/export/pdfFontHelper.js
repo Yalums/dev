@@ -57,103 +57,29 @@ function hasUnicodeCmap(arrayBuffer) {
 async function loadFontFromProject(pdf, fontPath, fontName = 'CustomFont', fontStyle = 'normal') {
   try {
     console.log(`[PDF字体] 正在加载字体: ${fontPath}`);
-    
-    // 设置超时时间（5秒）
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
-    
-    try {
-      // 从 public 目录加载字体文件
-      // 添加时间戳参数破坏缓存
-      const cacheBuster = `?v=${Date.now()}`;
-      const response = await fetch(fontPath + cacheBuster, { 
-        signal: controller.signal,
-        cache: 'no-store', // 禁用缓存
-        headers: {
-          'Cache-Control': 'no-cache'
-        }
-      });
-      clearTimeout(timeoutId);
-      
-      if (!response.ok) {
-        throw new Error(`加载字体失败: ${response.status}`);
-      }
 
-      // 检查 Content-Type，确保是字体文件而不是HTML错误页面
-      const contentType = response.headers.get('content-type');
-      console.log(`[PDF字体] Content-Type: ${contentType}`);
+    // 使用新的缓存系统加载字体数据
+    const { arrayBuffer, base64 } = await loadFontData(fontPath);
 
-      if (contentType && contentType.includes('text/html')) {
-        console.error(`[PDF字体] 返回了HTML页面而不是字体文件！`);
-        return false;
-      }
-
-      const arrayBuffer = await response.arrayBuffer();
-      const fileSizeKB = (arrayBuffer.byteLength / 1024).toFixed(2);
-      const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
-
-      console.log(`[PDF字体] 字体文件大小: ${fileSizeMB} MB (${fileSizeKB} KB)`);
-
-      // 验证TTF魔数（文件头）
-      const dataView = new DataView(arrayBuffer);
-      const magic = dataView.getUint32(0, false);
-      // TTF文件应该以 0x00010000 或 0x74727565 ('true') 开头
-      if (magic !== 0x00010000 && magic !== 0x74727565) {
-        console.error(`[PDF字体] 文件不是有效的TTF字体！魔数: 0x${magic.toString(16)}`);
-        console.error(`[PDF字体] 这可能是一个HTML错误页面或其他非字体文件`);
-        return false;
-      }
-
-      // 检查文件是否太小
-      if (arrayBuffer.byteLength < 500 * 1024) {
-        console.error(`[PDF字体] 字体文件异常小 (仅 ${fileSizeKB} KB)！`);
-        console.error(`[PDF字体] 正常的中文字体应该至少 3MB`);
-        return false;
-      }
-      
-      // 验证字体是否包含 cmap 表
+    // 验证字体是否包含 cmap 表（仅在首次下载时警告）
+    if (!FontCache.has(fontPath)) {
       const hasCmap = hasUnicodeCmap(arrayBuffer);
       if (!hasCmap) {
         console.warn(`[PDF字体] 警告: 字体可能缺少 Unicode cmap 表`);
-        console.warn(`[PDF字体] 建议更换为 Noto Sans SC 或 Source Han Sans CN`);
       }
-      
-      const bytes = new Uint8Array(arrayBuffer);
-      
-      // 转换为base64
-      let binary = '';
-      const len = bytes.byteLength;
-      // 批量处理以提高性能
-      const chunkSize = 8192;
-      for (let i = 0; i < len; i += chunkSize) {
-        const chunk = bytes.subarray(i, Math.min(i + chunkSize, len));
-        binary += String.fromCharCode.apply(null, chunk);
-      }
-      const base64 = btoa(binary);
-      
-      // 添加字体到jsPDF
-      const fileName = fontPath.split('/').pop();
-      
-      try {
-        pdf.addFileToVFS(fileName, base64);
-        // 添加字体时指定样式
-        pdf.addFont(fileName, fontName, fontStyle);
+    }
 
-        console.log(`[PDF字体] 字体加载成功: ${fontName}-${fontStyle}`);
-        return true;
-      } catch (addFontError) {
-        console.error(`[PDF字体] addFont 失败:`, addFontError.message);
-        console.error(`[PDF字体] 这通常意味着字体不兼容 jsPDF`);
-        console.error(`[PDF字体] 错误详情:`, addFontError);
-        return false;
-      }
-    } catch (fetchError) {
-      clearTimeout(timeoutId);
-      if (fetchError.name === 'AbortError') {
-        console.warn(`[PDF字体] 字体加载超时: ${fontPath}`);
-      } else {
-        console.warn(`[PDF字体] 获取字体文件失败: ${fetchError.message}`);
-      }
+    // 添加字体到jsPDF
+    const fileName = fontPath.split('/').pop();
+
+    try {
+      pdf.addFileToVFS(fileName, base64);
+      pdf.addFont(fileName, fontName, fontStyle);
+      console.log(`[PDF字体] ✓ 字体注册成功: ${fontName}-${fontStyle}`);
+      return true;
+    } catch (addFontError) {
+      console.error(`[PDF字体] addFont 失败:`, addFontError.message);
+      console.error(`[PDF字体] 这通常意味着字体不兼容 jsPDF`);
       return false;
     }
   } catch (error) {
@@ -175,21 +101,21 @@ export async function addChineseFontSupport(pdf) {
   // 定义字体配置 - 使用阿如汉字黑体
   const fontConfigs = [
     {
-      path: '/fonts/ARUDJingxihei-Regular.ttf',
+      path: '/lyra-exporter/fonts/ARUDJingxihei-Regular.ttf',
       name: 'ARUDJingxihei',
       style: 'normal',
       weight: 400,
       description: 'Regular (正常)'
     },
     {
-      path: '/fonts/ARUDJingxihei-Bold.ttf',
+      path: '/lyra-exporter/fonts/ARUDJingxihei-Bold.ttf',
       name: 'ARUDJingxihei',
       style: 'bold',
       weight: 700,
       description: 'Bold (粗体)'
     },
     {
-      path: '/fonts/ARUDJingxihei-Light.ttf',
+      path: '/lyra-exporter/fonts/ARUDJingxihei-Light.ttf',
       name: 'ARUDJingxihei',
       style: 'light',
       weight: 300,
@@ -238,4 +164,316 @@ export async function addChineseFontSupport(pdf) {
   }
 
   return { success: true, fontName, availableWeights };
+}
+
+// ==================== 字体预加载系统 ====================
+
+/**
+ * 字体加载状态
+ */
+const FontLoadingState = {
+  isLoading: false,
+  isLoaded: false,
+  error: null
+};
+
+/**
+ * 字体缓存（存储在内存中，避免重复下载）
+ * 结构：{ [fontPath]: { arrayBuffer, base64, timestamp } }
+ */
+const FontCache = new Map();
+
+/**
+ * 从缓存或网络加载字体文件
+ * @param {string} fontPath - 字体路径
+ * @returns {Promise<{arrayBuffer: ArrayBuffer, base64: string}>} - 字体数据
+ */
+async function loadFontData(fontPath) {
+  // 1. 检查内存缓存
+  if (FontCache.has(fontPath)) {
+    const cached = FontCache.get(fontPath);
+    console.log(`[PDF字体] ✓ 使用内存缓存: ${fontPath}`);
+    return { arrayBuffer: cached.arrayBuffer, base64: cached.base64 };
+  }
+
+  // 2. 检查 IndexedDB 缓存
+  try {
+    const dbCache = await loadFromIndexedDB(fontPath);
+    if (dbCache) {
+      console.log(`[PDF字体] ✓ 使用 IndexedDB 缓存: ${fontPath}`);
+      // 同步到内存缓存
+      FontCache.set(fontPath, {
+        arrayBuffer: dbCache.arrayBuffer,
+        base64: dbCache.base64,
+        timestamp: Date.now()
+      });
+      return dbCache;
+    }
+  } catch (error) {
+    console.warn(`[PDF字体] IndexedDB 读取失败: ${error.message}`);
+  }
+
+  // 3. 从网络下载
+  console.log(`[PDF字体] 从网络下载: ${fontPath}`);
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 10000); // 10秒超时
+
+  try {
+    // 使用浏览器缓存，移除 cacheBuster
+    const response = await fetch(fontPath, {
+      signal: controller.signal,
+      cache: 'force-cache', // 利用浏览器缓存
+    });
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const contentType = response.headers.get('content-type');
+    if (contentType && contentType.includes('text/html')) {
+      throw new Error('返回了HTML而不是字体文件');
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const fileSizeMB = (arrayBuffer.byteLength / 1024 / 1024).toFixed(2);
+    console.log(`[PDF字体] 下载完成: ${fileSizeMB} MB`);
+
+    // 验证TTF魔数
+    const dataView = new DataView(arrayBuffer);
+    const magic = dataView.getUint32(0, false);
+    if (magic !== 0x00010000 && magic !== 0x74727565) {
+      throw new Error(`无效的TTF文件，魔数: 0x${magic.toString(16)}`);
+    }
+
+    // 检查文件大小
+    if (arrayBuffer.byteLength < 500 * 1024) {
+      throw new Error(`字体文件异常小 (${fileSizeMB} MB)`);
+    }
+
+    // 转换为 base64
+    const bytes = new Uint8Array(arrayBuffer);
+    let binary = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < bytes.length; i += chunkSize) {
+      const chunk = bytes.subarray(i, Math.min(i + chunkSize, bytes.length));
+      binary += String.fromCharCode.apply(null, chunk);
+    }
+    const base64 = btoa(binary);
+
+    const fontData = { arrayBuffer, base64 };
+
+    // 4. 缓存到内存
+    FontCache.set(fontPath, {
+      arrayBuffer,
+      base64,
+      timestamp: Date.now()
+    });
+
+    // 5. 缓存到 IndexedDB（异步，不阻塞）
+    saveToIndexedDB(fontPath, fontData).catch(err => {
+      console.warn(`[PDF字体] IndexedDB 保存失败: ${err.message}`);
+    });
+
+    return fontData;
+  } catch (fetchError) {
+    clearTimeout(timeoutId);
+    if (fetchError.name === 'AbortError') {
+      throw new Error('下载超时');
+    }
+    throw fetchError;
+  }
+}
+
+/**
+ * 从 IndexedDB 加载字体
+ * @param {string} fontPath - 字体路径
+ * @returns {Promise<{arrayBuffer: ArrayBuffer, base64: string} | null>}
+ */
+async function loadFromIndexedDB(fontPath) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('LyraFontCache', 1);
+
+    request.onerror = () => reject(request.error);
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('fonts')) {
+        db.createObjectStore('fonts', { keyPath: 'path' });
+      }
+    };
+
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const transaction = db.transaction(['fonts'], 'readonly');
+        const store = transaction.objectStore('fonts');
+        const getRequest = store.get(fontPath);
+
+        getRequest.onsuccess = () => {
+          const data = getRequest.result;
+          if (data && data.arrayBuffer && data.base64) {
+            resolve({ arrayBuffer: data.arrayBuffer, base64: data.base64 });
+          } else {
+            resolve(null);
+          }
+        };
+
+        getRequest.onerror = () => resolve(null);
+      } catch (error) {
+        resolve(null);
+      } finally {
+        db.close();
+      }
+    };
+  });
+}
+
+/**
+ * 保存字体到 IndexedDB
+ * @param {string} fontPath - 字体路径
+ * @param {{arrayBuffer: ArrayBuffer, base64: string}} fontData - 字体数据
+ * @returns {Promise<void>}
+ */
+async function saveToIndexedDB(fontPath, fontData) {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('LyraFontCache', 1);
+
+    request.onerror = () => reject(request.error);
+
+    request.onupgradeneeded = (event) => {
+      const db = event.target.result;
+      if (!db.objectStoreNames.contains('fonts')) {
+        db.createObjectStore('fonts', { keyPath: 'path' });
+      }
+    };
+
+    request.onsuccess = () => {
+      const db = request.result;
+      try {
+        const transaction = db.transaction(['fonts'], 'readwrite');
+        const store = transaction.objectStore('fonts');
+
+        store.put({
+          path: fontPath,
+          arrayBuffer: fontData.arrayBuffer,
+          base64: fontData.base64,
+          timestamp: Date.now()
+        });
+
+        transaction.oncomplete = () => {
+          console.log(`[PDF字体] ✓ 已缓存到 IndexedDB: ${fontPath}`);
+          resolve();
+        };
+
+        transaction.onerror = () => reject(transaction.error);
+      } catch (error) {
+        reject(error);
+      } finally {
+        db.close();
+      }
+    };
+  });
+}
+
+/**
+ * 检查 IndexedDB 中是否已有所有字体缓存
+ * @param {string[]} fontPaths - 字体路径列表
+ * @returns {Promise<boolean>} - 是否所有字体都已缓存
+ */
+async function checkCacheExists(fontPaths) {
+  try {
+    const checkPromises = fontPaths.map(async (path) => {
+      const cached = await loadFromIndexedDB(path);
+      return cached !== null;
+    });
+
+    const results = await Promise.all(checkPromises);
+    return results.every(r => r); // 所有字体都存在才返回 true
+  } catch (error) {
+    console.warn('[PDF字体] 缓存检查失败:', error.message);
+    return false;
+  }
+}
+
+/**
+ * 预加载字体文件到缓存（内存 + IndexedDB）
+ * @param {boolean} silent - 是否静默加载（不触发 isLoading 状态）
+ * @returns {Promise<boolean>} - 是否成功加载
+ */
+export async function preloadFont(silent = false) {
+  if (FontLoadingState.isLoading || FontLoadingState.isLoaded) {
+    return FontLoadingState.isLoaded;
+  }
+
+  const fontPaths = [
+    '/lyra-exporter/fonts/ARUDJingxihei-Regular.ttf',
+    '/lyra-exporter/fonts/ARUDJingxihei-Bold.ttf',
+    '/lyra-exporter/fonts/ARUDJingxihei-Light.ttf'
+  ];
+
+  // 先检查缓存是否已存在
+  const cacheExists = await checkCacheExists(fontPaths);
+
+  if (cacheExists) {
+    console.log('[PDF字体预加载] ✓ 检测到本地缓存，静默加载...');
+    // 有缓存：静默加载到内存，不显示弹窗
+    try {
+      const loadPromises = fontPaths.map(path => loadFontData(path));
+      await Promise.all(loadPromises);
+      FontLoadingState.isLoaded = true;
+      console.log('[PDF字体预加载] ✓ 从本地缓存加载完成');
+      return true;
+    } catch (error) {
+      console.warn('[PDF字体预加载] 缓存加载失败，将重新下载:', error.message);
+      // 继续走下载流程
+    }
+  }
+
+  // 无缓存或缓存加载失败：需要下载，显示弹窗
+  if (!silent) {
+    FontLoadingState.isLoading = true;
+  }
+  FontLoadingState.error = null;
+
+  try {
+    console.log('[PDF字体预加载] 开始下载字体到缓存...');
+
+    const loadPromises = fontPaths.map(async (path) => {
+      try {
+        await loadFontData(path);
+        return true;
+      } catch (error) {
+        console.warn(`[PDF字体预加载] 加载失败: ${path}`, error.message);
+        return false;
+      }
+    });
+
+    const results = await Promise.all(loadPromises);
+    const successCount = results.filter(r => r).length;
+    FontLoadingState.isLoaded = successCount > 0;
+    FontLoadingState.isLoading = false;
+
+    console.log(`[PDF字体预加载] 完成，成功加载 ${successCount}/${fontPaths.length} 个字体`);
+
+    return FontLoadingState.isLoaded;
+  } catch (error) {
+    console.error('[PDF字体预加载] 预加载失败:', error);
+    FontLoadingState.error = error.message;
+    FontLoadingState.isLoading = false;
+    FontLoadingState.isLoaded = false;
+    return false;
+  }
+}
+
+/**
+ * 获取字体加载状态
+ * @returns {object} - 字体加载状态对象
+ */
+export function getFontStatus() {
+  return {
+    isLoading: FontLoadingState.isLoading,
+    isLoaded: FontLoadingState.isLoaded,
+    error: FontLoadingState.error
+  };
 }

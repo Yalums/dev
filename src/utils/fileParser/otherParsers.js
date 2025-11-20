@@ -6,7 +6,8 @@ import {
   createMessage,
   DateTimeUtils,
   processGeminiImage,
-  extractThinkingAndContent
+  extractThinkingAndContent,
+  PARSER_CONFIG
 } from './helpers.js';
 
 // ==================== Gemini/NotebookLM 解析器 ====================
@@ -181,6 +182,15 @@ const extractGeminiMultiBranchData = (jsonData, fileName) => {
   const chatHistory = [];
   let messageIndex = 0;
 
+  // 首先收集每个 turn 的最后一个 assistant version，用于确定下一轮 human 的 parent
+  const lastAssistantVersions = {};
+  jsonData.conversation.forEach((turn) => {
+    if (turn.assistant && turn.assistant.versions && turn.assistant.versions.length > 0) {
+      const versions = turn.assistant.versions;
+      lastAssistantVersions[turn.turnIndex] = versions[versions.length - 1].version;
+    }
+  });
+
   // 遍历每个 turn
   jsonData.conversation.forEach((turn) => {
     const turnIndex = turn.turnIndex;
@@ -189,7 +199,18 @@ const extractGeminiMultiBranchData = (jsonData, fileName) => {
     if (turn.human && turn.human.versions) {
       turn.human.versions.forEach((humanVersion, versionIdx) => {
         const uuid = `human_${turnIndex}_v${humanVersion.version}`;
-        const parentUuid = turnIndex > 0 ? `assistant_${turnIndex - 1}_v0` : "";
+
+        // 确定 parent：指向上一轮的最后一个 assistant version
+        // 使用 ROOT_UUID 作为首轮消息的 parent，以便 UI 能够检测首轮分支
+        let parentUuid = PARSER_CONFIG.ROOT_UUID;
+        if (turnIndex > 0) {
+          const prevLastVersion = lastAssistantVersions[turnIndex - 1];
+          if (prevLastVersion !== undefined) {
+            parentUuid = `assistant_${turnIndex - 1}_v${prevLastVersion}`;
+          } else {
+            parentUuid = `assistant_${turnIndex - 1}_v0`;
+          }
+        }
 
         const humanMessage = createMessage(
           messageIndex++,
@@ -232,6 +253,11 @@ const extractGeminiMultiBranchData = (jsonData, fileName) => {
         assistantMessage._version = assistantVersion.version;
         assistantMessage._version_type = assistantVersion.type || 'normal';
         assistantMessage._user_version = userVersion;
+
+        // 处理 canvas 内容
+        if (assistantVersion.canvas && assistantVersion.canvas.length > 0) {
+          assistantMessage.canvas = assistantVersion.canvas;
+        }
 
         chatHistory.push(assistantMessage);
       });
@@ -375,6 +401,41 @@ export const detectOtherBranches = (processedData) => {
     return processedData;
   }
 
-  // Gemini/NotebookLM 通常没有分支
+  // Gemini 多分支格式检测（realtime 模式）
+  if (processedData.format === 'gemini_notebooklm') {
+    const messages = processedData.chat_history;
+
+    // 检查是否有版本信息（多分支格式的标志）
+    const hasVersionInfo = messages.some(msg => msg._version !== undefined);
+
+    if (hasVersionInfo) {
+      messages.forEach(msg => {
+        const version = msg._version || 0;
+        const versionType = msg._version_type || 'normal';
+
+        // version 0 且 type 为 normal 的是主分支
+        // edit/retry 类型或 version > 0 的是分支
+        if (version === 0 && versionType === 'normal') {
+          msg.branch_id = 'main';
+          msg.branch_level = 0;
+        } else {
+          // 根据 userVersion 确定分支层级
+          const userVersion = msg._user_version !== undefined ? msg._user_version : 0;
+          msg.branch_id = `branch_v${version}_uv${userVersion}`;
+          msg.branch_level = version > 0 ? version : 1;
+        }
+      });
+    } else {
+      // 普通 Gemini 格式，所有消息都是主分支
+      messages.forEach(msg => {
+        msg.branch_id = 'main';
+        msg.branch_level = 0;
+      });
+    }
+
+    return processedData;
+  }
+
+  // 其他格式默认处理
   return processedData;
 };
