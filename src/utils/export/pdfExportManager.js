@@ -32,6 +32,24 @@ import {
   parseInlineMarkdown
 } from './pdfContentRenderers';
 
+// 导入文本和页面助手
+import {
+  cleanText,
+  safeSetFont,
+  safeGetTextWidth,
+  safeRenderText,
+  renderPlainText,
+  applyCJKPunctuationRules,
+  renderInlineSegments,
+  renderSegmentLine,
+  applySegmentStyle,
+  checkPageBreak,
+  renderFooter,
+  addBookmarks,
+  addFooters,
+  renderTOCWithLinks
+} from './pdfTextHelpers';
+
 /**
  * 获取页面尺寸配置
  * @param {string} format - 页面格式 ('a4', 'letter', 'supernote')
@@ -58,24 +76,6 @@ function getPageDimensions(format) {
 
   return formats[format] || formats.a4;
 }
-
-// 导入文本和页面助手
-import {
-  cleanText,
-  safeSetFont,
-  safeGetTextWidth,
-  safeRenderText,
-  renderPlainText,
-  applyCJKPunctuationRules,
-  renderInlineSegments,
-  renderSegmentLine,
-  applySegmentStyle,
-  checkPageBreak,
-  renderFooter,
-  addBookmarks,
-  addFooters,
-  renderTOCWithLinks
-} from './pdfTextHelpers';
 
 /**
  * PDF导出管理器类
