@@ -11,14 +11,56 @@
 // - 导出流程协调
 // - 消息结构渲染
 // - 文件名生成
+// - PDF样式常量定义（统一来源）
 
 import { jsPDF } from 'jspdf';
 import { DateTimeUtils } from '../fileParser';
 import { addChineseFontSupport } from './pdfFontHelper';
 
+/**
+ * PDF 样式配置（统一常量定义）
+ * 所有 PDF 模块都应从此处导入，避免重复定义
+ */
+export const PDF_STYLES = {
+  // 字体大小
+  FONT_SIZE_TITLE: 20,
+  FONT_SIZE_H1: 16,
+  FONT_SIZE_H2: 14,
+  FONT_SIZE_SENDER: 12,
+  FONT_SIZE_BODY: 10,
+  FONT_SIZE_CODE: 9,
+  FONT_SIZE_TIMESTAMP: 8,
+  FONT_SIZE_HEADER: 8,
+  FONT_SIZE_FOOTER: 8,
+
+  // 颜色 (RGB)
+  COLOR_SENDER_HUMAN: [0, 102, 204],      // 蓝色
+  COLOR_SENDER_ASSISTANT: [102, 102, 102], // 灰色
+  COLOR_TIMESTAMP: [150, 150, 150],        // 浅灰
+  COLOR_CODE_BG: [245, 245, 245],          // 代码背景
+  COLOR_SECTION_BG: [250, 250, 250],       // 区块背景
+  COLOR_TEXT: [0, 0, 0],                   // 黑色文本
+  COLOR_HEADER: [100, 100, 100],           // 页眉颜色
+  COLOR_FOOTER: [150, 150, 150],           // 页脚颜色
+  COLOR_BORDER: [200, 200, 200],           // 边框颜色
+
+  // 间距
+  MARGIN_LEFT: 15,
+  MARGIN_RIGHT: 15,
+  MARGIN_TOP: 15,
+  MARGIN_BOTTOM: 25,
+  LINE_HEIGHT: 5,
+  SECTION_SPACING: 8,
+  MESSAGE_SPACING: 10,
+  FOOTER_HEIGHT: 15,
+
+  // 页面（默认A4，会在运行时根据配置动态更新）
+  PAGE_WIDTH: 210,  // A4 宽度(mm)
+  PAGE_HEIGHT: 297, // A4 高度(mm)
+};
+
 // 导入内容渲染器
 import {
-  PDF_STYLES,
   renderCodeBlock,
   parseCodeLineBold,
   renderMarkdownText,

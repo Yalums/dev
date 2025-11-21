@@ -6,42 +6,8 @@
 // - Markdown 渲染（标题、引用、列表、内联格式）
 // - 内容区块渲染（Thinking、Artifact、Tool、Citations、Attachments）
 
-/**
- * PDF 样式配置（从主文件导入需要的常量）
- * 注意：这些常量需要与 pdfExportManager.js 中的 PDF_STYLES 保持一致
- */
-export const PDF_STYLES = {
-  // 字体大小
-  FONT_SIZE_TITLE: 20,
-  FONT_SIZE_H1: 16,
-  FONT_SIZE_H2: 14,
-  FONT_SIZE_SENDER: 12,
-  FONT_SIZE_BODY: 10,
-  FONT_SIZE_CODE: 9,
-  FONT_SIZE_TIMESTAMP: 8,
-
-  // 颜色 (RGB)
-  COLOR_SENDER_HUMAN: [0, 102, 204],      // 蓝色
-  COLOR_SENDER_ASSISTANT: [102, 102, 102], // 灰色
-  COLOR_TIMESTAMP: [150, 150, 150],        // 浅灰
-  COLOR_CODE_BG: [245, 245, 245],          // 代码背景
-  COLOR_SECTION_BG: [250, 250, 250],       // 区块背景
-  COLOR_TEXT: [0, 0, 0],                   // 黑色文本
-  COLOR_BORDER: [200, 200, 200],           // 边框颜色
-
-  // 间距
-  MARGIN_LEFT: 15,
-  MARGIN_RIGHT: 15,
-  MARGIN_TOP: 15,
-  MARGIN_BOTTOM: 25,
-  LINE_HEIGHT: 5,
-  SECTION_SPACING: 8,
-  MESSAGE_SPACING: 10,
-
-  // 页面
-  PAGE_WIDTH: 210,  // A4 宽度(mm)
-  PAGE_HEIGHT: 297, // A4 高度(mm)
-};
+// 从 pdfExportManager 导入统一的 PDF 样式配置
+import { PDF_STYLES } from './pdfExportManager';
 
 /**
  * 渲染代码块（支持跨页）
