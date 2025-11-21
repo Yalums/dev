@@ -2,7 +2,7 @@
 // PDF导出管理器 - 基于jsPDF实现纯文本PDF导出
 //
 // 使用 ARUDJingxihei 字体家族支持中文显示（Regular、Bold、Light 三种字重）
-// 支持 Markdown 渲染（标题、粗体、斜体、列表、引用等）和 LaTeX 公式显示
+// 支持 Markdown 渲染（标题、粗体、斜体、列表、引用等）
 import { jsPDF } from 'jspdf';
 import { DateTimeUtils } from '../fileParser';
 import { addChineseFontSupport } from './pdfFontHelper';
@@ -708,16 +708,12 @@ export class PDFExportManager {
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
 
-    // 处理代码块和LaTeX公式
+    // 处理代码块
     const parts = this.parseTextWithCodeBlocksAndLatex(text);
 
     parts.forEach(part => {
       if (part.type === 'code') {
         this.renderCodeBlock(part.content, part.language);
-      } else if (part.type === 'latex-block') {
-        this.renderLatexBlock(part.content);
-      } else if (part.type === 'latex-inline') {
-        this.renderLatexInline(part.content, maxWidth);
       } else {
         // 渲染普通文本，支持markdown格式
         this.renderMarkdownText(part.content, maxWidth);
@@ -1048,252 +1044,6 @@ export class PDFExportManager {
   }
 
   /**
-   * 渲染块级LaTeX公式（支持跨页）- 改进版
-   * @param {string} latex - LaTeX公式内容
-   */
-  renderLatexBlock(latex) {
-    this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY + PDF_STYLES.SECTION_SPACING * 2);
-
-    const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
-    const padding = 3;
-
-    // 清理LaTeX
-    const cleanLatex = this.cleanText(latex);
-
-    // 渲染"Math"标签
-    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
-    this.pdf.setTextColor(70, 130, 180);
-    const labelText = 'MATH';
-    const labelWidth = this.safeGetTextWidth(labelText) + 4;
-    this.pdf.setFillColor(230, 240, 250);
-    this.pdf.roundedRect(
-      PDF_STYLES.MARGIN_LEFT,
-      this.currentY - 3,
-      labelWidth,
-      5,
-      1,
-      1,
-      'F'
-    );
-    this.pdf.text(labelText, PDF_STYLES.MARGIN_LEFT + 2, this.currentY);
-    this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
-
-    // 准备渲染内容：原始LaTeX + 转换后的Unicode（如果转换有意义）
-    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
-
-    // 判断转换是否有意义（如果转换后和原始差异不大，就只显示一个）
-    const conversionSignificant = renderedLatex !== cleanLatex &&
-                                   !cleanLatex.includes('\\frac') && // 分数转换后可读性差
-                                   renderedLatex.length < cleanLatex.length * 1.5;
-
-    // 构建显示文本
-    let displayText = '';
-    if (conversionSignificant) {
-      // 先显示转换后的版本（更易读）
-      displayText = renderedLatex + '\n\n' + '原始LaTeX: ' + cleanLatex;
-    } else {
-      // 直接显示原始LaTeX（保留完整信息）
-      displayText = cleanLatex;
-    }
-
-    // 处理公式文本
-    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
-    this.pdf.setFont(this.chineseFontName);
-
-    let formulaLines;
-    try {
-      formulaLines = this.pdf.splitTextToSize(displayText, maxWidth - 8);
-    } catch (error) {
-      formulaLines = displayText.split('\n');
-    }
-
-    // 逐行渲染
-    const blockStartY = this.currentY;
-    const blockStartPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
-
-    // 绘制第一页的背景
-    const firstPageHeight = Math.min(
-      formulaLines.length * PDF_STYLES.LINE_HEIGHT + padding * 2,
-      PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
-    );
-    this.pdf.setFillColor(245, 250, 255);
-    this.pdf.rect(
-      PDF_STYLES.MARGIN_LEFT,
-      blockStartY - padding,
-      maxWidth,
-      firstPageHeight,
-      'F'
-    );
-
-    this.currentY = blockStartY;
-
-    formulaLines.forEach((line, index) => {
-      // 检查是否需要换页
-      if (this.currentY + PDF_STYLES.FONT_SIZE_BODY > PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM) {
-        // 换页
-        this.pdf.addPage();
-        this.currentY = PDF_STYLES.MARGIN_TOP;
-
-        // 在新页绘制背景
-        const remainingLines = formulaLines.length - index;
-        const newPageHeight = Math.min(
-          remainingLines * PDF_STYLES.LINE_HEIGHT + padding,
-          PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM - this.currentY
-        );
-        this.pdf.setFillColor(245, 250, 255);
-        this.pdf.rect(
-          PDF_STYLES.MARGIN_LEFT,
-          this.currentY - padding,
-          maxWidth,
-          newPageHeight,
-          'F'
-        );
-      }
-
-      // 渲染公式文本
-      this.pdf.setTextColor(30, 60, 120);
-      const safeLine = this.cleanText(line);
-      if (safeLine && safeLine.trim().length > 0) {
-        this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT + 4, this.currentY);
-      }
-      this.currentY += PDF_STYLES.LINE_HEIGHT;
-    });
-
-    // 绘制边框
-    const endPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
-
-    for (let page = blockStartPage; page <= endPage; page++) {
-      this.pdf.setPage(page);
-      const isFirst = (page === blockStartPage);
-      const isLast = (page === endPage);
-
-      let boxStartY, boxEndY;
-      if (isFirst && isLast) {
-        boxStartY = blockStartY - padding;
-        boxEndY = this.currentY + padding;
-      } else if (isFirst) {
-        boxStartY = blockStartY - padding;
-        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
-      } else if (isLast) {
-        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
-        boxEndY = this.currentY + padding;
-      } else {
-        boxStartY = PDF_STYLES.MARGIN_TOP - padding;
-        boxEndY = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
-      }
-
-      // 绘制边框
-      this.pdf.setDrawColor(180, 210, 240);
-      this.pdf.setLineWidth(0.4);
-      if (isFirst && isLast) {
-        this.pdf.roundedRect(PDF_STYLES.MARGIN_LEFT, boxStartY, maxWidth, boxEndY - boxStartY, 1.5, 1.5, 'S');
-      } else {
-        this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT, boxEndY);
-        this.pdf.line(PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
-        if (isFirst) {
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxStartY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxStartY);
-        }
-        if (isLast) {
-          this.pdf.line(PDF_STYLES.MARGIN_LEFT, boxEndY, PDF_STYLES.MARGIN_LEFT + maxWidth, boxEndY);
-        }
-      }
-    }
-
-    // 确保回到最后一页
-    this.pdf.setPage(endPage);
-
-    // 恢复默认样式
-    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
-    this.currentY += PDF_STYLES.SECTION_SPACING;
-  }
-
-  /**
-   * 将LaTeX行按页分组
-   * @param {Array} lines - LaTeX公式行
-   * @returns {Array} - 分组后的行 [{page, startY, lines: [...]}]
-   */
-  groupLatexLinesByPage(lines) {
-    const groups = [];
-    let currentGroup = null;
-    const bottomLimit = PDF_STYLES.PAGE_HEIGHT - PDF_STYLES.MARGIN_BOTTOM;
-
-    let simulatedY = this.currentY;
-    let simulatedPage = this.pdf.internal.getCurrentPageInfo().pageNumber;
-
-    lines.forEach((line) => {
-      // 检查是否需要换页
-      if (simulatedY + PDF_STYLES.FONT_SIZE_BODY > bottomLimit) {
-        simulatedPage++;
-        simulatedY = PDF_STYLES.MARGIN_TOP;
-        currentGroup = null; // 开始新组
-      }
-
-      // 如果没有当前组或换页了，创建新组
-      if (!currentGroup || currentGroup.page !== simulatedPage) {
-        currentGroup = {
-          page: simulatedPage,
-          startY: simulatedY,
-          lines: []
-        };
-        groups.push(currentGroup);
-      }
-
-      // 添加行到当前组
-      currentGroup.lines.push(line);
-      simulatedY += PDF_STYLES.LINE_HEIGHT;
-    });
-
-    return groups;
-  }
-
-  /**
-   * 渲染行内LaTeX公式 - 改进版
-   * @param {string} latex - LaTeX公式内容
-   * @param {number} maxWidth - 最大宽度
-   */
-  renderLatexInline(latex, maxWidth) {
-    const cleanLatex = this.cleanText(latex);
-
-    // 转换LaTeX符号为Unicode
-    const renderedLatex = this.convertLatexToUnicode(cleanLatex);
-
-    // 设置行内公式样式
-    this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
-
-    // 判断是否需要显示原始LaTeX（如果转换不够好）
-    let formulaText;
-    if (cleanLatex.includes('\\frac') || cleanLatex.includes('\\sqrt') ||
-        renderedLatex === cleanLatex || cleanLatex.length < 30) {
-      // 对于复杂公式或转换效果不好的，直接显示原始LaTeX
-      formulaText = `⟨${cleanLatex}⟩`;
-    } else {
-      // 对于简单公式，使用转换后的Unicode
-      formulaText = `⟨${renderedLatex}⟩`;
-    }
-
-    // 使用特殊颜色标识数学公式
-    this.pdf.setTextColor(70, 130, 180); // 蓝色
-
-    try {
-      const lines = this.pdf.splitTextToSize(formulaText, maxWidth);
-      lines.forEach(line => {
-        this.checkPageBreak(PDF_STYLES.FONT_SIZE_BODY);
-        const safeLine = this.cleanText(line);
-        if (safeLine && safeLine.trim().length > 0) {
-          this.pdf.text(safeLine, PDF_STYLES.MARGIN_LEFT, this.currentY);
-        }
-        this.currentY += PDF_STYLES.LINE_HEIGHT;
-      });
-    } catch (error) {
-      this.pdf.text(formulaText, PDF_STYLES.MARGIN_LEFT, this.currentY);
-      this.currentY += PDF_STYLES.LINE_HEIGHT;
-    }
-
-    // 恢复默认颜色
-    this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
-  }
-
-  /**
    * 渲染thinking区块
    */
   renderThinking(thinking) {
@@ -1484,21 +1234,19 @@ export class PDFExportManager {
   }
 
   /**
-   * 解析文本中的代码块和LaTeX公式
-   * 优先级：代码块 > LaTeX块级公式 > LaTeX行内公式
+   * 解析文本中的代码块
    */
   parseTextWithCodeBlocksAndLatex(text) {
     const parts = [];
     const elements = [];
 
-    // 1. 首先提取所有代码块（允许语言标识符后有空格）
+    // 提取所有代码块（允许语言标识符后有空格）
     const codeBlockRegex = /```([^\n]*?)\s*\n([\s\S]*?)```/g;
     let match;
     let lastIndex = 0;
 
     while ((match = codeBlockRegex.exec(text)) !== null) {
       const language = (match[1] || '').trim(); // 清理语言标识符
-      console.log('[PDF导出] 发现代码块:', { language, contentLength: match[2].length });
       elements.push({
         start: match.index,
         end: match.index + match[0].length,
@@ -1508,46 +1256,10 @@ export class PDFExportManager {
       });
     }
 
-    // 2. 提取块级LaTeX公式（$$...$$）
-    const latexBlockRegex = /\$\$([\s\S]*?)\$\$/g;
-    while ((match = latexBlockRegex.exec(text)) !== null) {
-      // 检查是否与代码块重叠
-      const overlaps = elements.some(el =>
-        (match.index >= el.start && match.index < el.end) ||
-        (match.index + match[0].length > el.start && match.index + match[0].length <= el.end)
-      );
-      if (!overlaps) {
-        elements.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          type: 'latex-block',
-          content: match[1].trim()
-        });
-      }
-    }
-
-    // 3. 提取行内LaTeX公式（$...$，但不是$$）
-    const latexInlineRegex = /(?<!\$)\$(?!\$)((?:\\.|[^$\\])+?)\$(?!\$)/g;
-    while ((match = latexInlineRegex.exec(text)) !== null) {
-      // 检查是否与已有元素重叠
-      const overlaps = elements.some(el =>
-        (match.index >= el.start && match.index < el.end) ||
-        (match.index + match[0].length > el.start && match.index + match[0].length <= el.end)
-      );
-      if (!overlaps) {
-        elements.push({
-          start: match.index,
-          end: match.index + match[0].length,
-          type: 'latex-inline',
-          content: match[1].trim()
-        });
-      }
-    }
-
-    // 4. 按位置排序所有元素
+    // 按位置排序所有元素
     elements.sort((a, b) => a.start - b.start);
 
-    // 5. 构建最终的parts数组
+    // 构建最终的parts数组
     lastIndex = 0;
     elements.forEach(element => {
       // 添加元素前的文本
@@ -2263,211 +1975,6 @@ export class PDFExportManager {
       default:
         this.safeSetFont(this.chineseFontName, 'normal');
     }
-  }
-
-  /**
-   * 将LaTeX命令转换为Unicode数学符号
-   * 这使得PDF中的数学公式更易读
-   */
-  convertLatexToUnicode(latex) {
-    if (!latex) return '';
-
-    let result = latex;
-
-    // 希腊字母
-    const greekLetters = {
-      '\\alpha': 'α', '\\Alpha': 'Α',
-      '\\beta': 'β', '\\Beta': 'Β',
-      '\\gamma': 'γ', '\\Gamma': 'Γ',
-      '\\delta': 'δ', '\\Delta': 'Δ',
-      '\\epsilon': 'ε', '\\Epsilon': 'Ε',
-      '\\varepsilon': 'ε',
-      '\\zeta': 'ζ', '\\Zeta': 'Ζ',
-      '\\eta': 'η', '\\Eta': 'Η',
-      '\\theta': 'θ', '\\Theta': 'Θ',
-      '\\vartheta': 'ϑ',
-      '\\iota': 'ι', '\\Iota': 'Ι',
-      '\\kappa': 'κ', '\\Kappa': 'Κ',
-      '\\lambda': 'λ', '\\Lambda': 'Λ',
-      '\\mu': 'μ', '\\Mu': 'Μ',
-      '\\nu': 'ν', '\\Nu': 'Ν',
-      '\\xi': 'ξ', '\\Xi': 'Ξ',
-      '\\omicron': 'ο', '\\Omicron': 'Ο',
-      '\\pi': 'π', '\\Pi': 'Π',
-      '\\rho': 'ρ', '\\Rho': 'Ρ',
-      '\\sigma': 'σ', '\\Sigma': 'Σ',
-      '\\tau': 'τ', '\\Tau': 'Τ',
-      '\\upsilon': 'υ', '\\Upsilon': 'Υ',
-      '\\phi': 'φ', '\\Phi': 'Φ',
-      '\\varphi': 'ϕ',
-      '\\chi': 'χ', '\\Chi': 'Χ',
-      '\\psi': 'ψ', '\\Psi': 'Ψ',
-      '\\omega': 'ω', '\\Omega': 'Ω'
-    };
-
-    // 数学运算符和符号
-    const mathSymbols = {
-      // 关系符号
-      '\\leq': '≤', '\\le': '≤',
-      '\\geq': '≥', '\\ge': '≥',
-      '\\neq': '≠', '\\ne': '≠',
-      '\\approx': '≈',
-      '\\equiv': '≡',
-      '\\sim': '∼',
-      '\\simeq': '≃',
-      '\\cong': '≅',
-      '\\propto': '∝',
-      '\\ll': '≪',
-      '\\gg': '≫',
-      '\\subset': '⊂',
-      '\\supset': '⊃',
-      '\\subseteq': '⊆',
-      '\\supseteq': '⊇',
-      '\\in': '∈',
-      '\\notin': '∉',
-      '\\ni': '∋',
-      '\\emptyset': '∅',
-
-      // 箭头
-      '\\rightarrow': '→', '\\to': '→',
-      '\\leftarrow': '←',
-      '\\leftrightarrow': '↔',
-      '\\Rightarrow': '⇒',
-      '\\Leftarrow': '⇐',
-      '\\Leftrightarrow': '⇔',
-      '\\uparrow': '↑',
-      '\\downarrow': '↓',
-      '\\mapsto': '↦',
-
-      // 运算符
-      '\\times': '×',
-      '\\div': '÷',
-      '\\pm': '±',
-      '\\mp': '∓',
-      '\\cdot': '·',
-      '\\ast': '∗',
-      '\\star': '⋆',
-      '\\circ': '∘',
-      '\\bullet': '•',
-      '\\oplus': '⊕',
-      '\\ominus': '⊖',
-      '\\otimes': '⊗',
-      '\\odot': '⊙',
-      '\\oslash': '⊘',
-      '\\cup': '∪',
-      '\\cap': '∩',
-      '\\vee': '∨',
-      '\\wedge': '∧',
-
-      // 微积分
-      '\\partial': '∂',
-      '\\nabla': '∇',
-      '\\infty': '∞',
-      '\\int': '∫',
-      '\\iint': '∬',
-      '\\iiint': '∭',
-      '\\oint': '∮',
-      '\\sum': '∑',
-      '\\prod': '∏',
-      '\\coprod': '∐',
-
-      // 逻辑符号
-      '\\forall': '∀',
-      '\\exists': '∃',
-      '\\nexists': '∄',
-      '\\neg': '¬',
-      '\\lnot': '¬',
-      '\\land': '∧',
-      '\\lor': '∨',
-      '\\implies': '⇒',
-      '\\iff': '⇔',
-
-      // 其他符号
-      '\\angle': '∠',
-      '\\degree': '°',
-      '\\prime': '′',
-      '\\dprime': '″',
-      '\\infty': '∞',
-      '\\aleph': 'ℵ',
-      '\\hbar': 'ℏ',
-      '\\ell': 'ℓ',
-      '\\wp': '℘',
-      '\\Re': 'ℜ',
-      '\\Im': 'ℑ',
-      '\\bot': '⊥',
-      '\\top': '⊤',
-      '\\perp': '⊥',
-      '\\parallel': '∥',
-      '\\triangle': '△',
-      '\\square': '□',
-      '\\checkmark': '✓',
-
-      // 特殊函数和文本
-      '\\dots': '…',
-      '\\ldots': '…',
-      '\\cdots': '⋯',
-      '\\vdots': '⋮',
-      '\\ddots': '⋱',
-
-      // 括号（虽然通常不需要转换，但有些特殊情况）
-      '\\langle': '⟨',
-      '\\rangle': '⟩',
-      '\\lfloor': '⌊',
-      '\\rfloor': '⌋',
-      '\\lceil': '⌈',
-      '\\rceil': '⌉',
-    };
-
-    // 上下标简化处理
-    // 将 ^{...} 和 _{...} 简化为 ^(...) 和 _(...) 以便阅读
-    result = result.replace(/\^{([^}]+)}/g, '^($1)');
-    result = result.replace(/_{([^}]+)}/g, '_($1)');
-
-    // 分数简化
-    result = result.replace(/\\frac{([^}]+)}{([^}]+)}/g, '($1)/($2)');
-
-    // 平方根
-    result = result.replace(/\\sqrt{([^}]+)}/g, '√($1)');
-    result = result.replace(/\\sqrt\[(\d+)\]{([^}]+)}/g, '[$1]√($2)');
-
-    // 替换希腊字母
-    Object.keys(greekLetters).forEach(latex => {
-      const regex = new RegExp(latex.replace(/\\/g, '\\\\'), 'g');
-      result = result.replace(regex, greekLetters[latex]);
-    });
-
-    // 替换数学符号
-    Object.keys(mathSymbols).forEach(latex => {
-      const regex = new RegExp(latex.replace(/\\/g, '\\\\'), 'g');
-      result = result.replace(regex, mathSymbols[latex]);
-    });
-
-    // 移除常见的LaTeX命令（保留内容）
-    result = result.replace(/\\text{([^}]+)}/g, '$1');
-    result = result.replace(/\\mathrm{([^}]+)}/g, '$1');
-    result = result.replace(/\\mathbf{([^}]+)}/g, '$1');
-    result = result.replace(/\\mathit{([^}]+)}/g, '$1');
-    result = result.replace(/\\mathcal{([^}]+)}/g, '$1');
-    result = result.replace(/\\mathbb{([^}]+)}/g, '$1');
-
-    // 移除对齐和换行命令
-    result = result.replace(/\\\\(?:\[[^\]]*\])?/g, '\n');
-    result = result.replace(/&/g, ' ');
-
-    // 移除空格命令
-    result = result.replace(/\\,/g, ' ');
-    result = result.replace(/\\;/g, ' ');
-    result = result.replace(/\\quad/g, '  ');
-    result = result.replace(/\\qquad/g, '    ');
-    result = result.replace(/\\ /g, ' ');
-
-    // 移除多余的花括号
-    result = result.replace(/{([^{}]+)}/g, '$1');
-
-    // 清理多余空格
-    result = result.replace(/\s+/g, ' ').trim();
-
-    return result;
   }
 
   /**
