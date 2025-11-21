@@ -101,21 +101,21 @@ export async function addChineseFontSupport(pdf) {
   // 定义字体配置 - 使用阿如汉字黑体
   const fontConfigs = [
     {
-      path: '/lyra-exporter/fonts/ARUDJingxihei-Regular.ttf',
+      path: '/dev/fonts/ARUDJingxihei-Regular.ttf',
       name: 'ARUDJingxihei',
       style: 'normal',
       weight: 400,
       description: 'Regular (正常)'
     },
     {
-      path: '/lyra-exporter/fonts/ARUDJingxihei-Bold.ttf',
+      path: '/dev/fonts/ARUDJingxihei-Bold.ttf',
       name: 'ARUDJingxihei',
       style: 'bold',
       weight: 700,
       description: 'Bold (粗体)'
     },
     {
-      path: '/lyra-exporter/fonts/ARUDJingxihei-Light.ttf',
+      path: '/dev/fonts/ARUDJingxihei-Light.ttf',
       name: 'ARUDJingxihei',
       style: 'light',
       weight: 300,
@@ -407,9 +407,9 @@ export async function preloadFont(silent = false) {
   }
 
   const fontPaths = [
-    '/lyra-exporter/fonts/ARUDJingxihei-Regular.ttf',
-    '/lyra-exporter/fonts/ARUDJingxihei-Bold.ttf',
-    '/lyra-exporter/fonts/ARUDJingxihei-Light.ttf'
+    '/dev/fonts/ARUDJingxihei-Regular.ttf',
+    '/dev/fonts/ARUDJingxihei-Bold.ttf',
+    '/dev/fonts/ARUDJingxihei-Light.ttf'
   ];
 
   // 先检查缓存是否已存在
