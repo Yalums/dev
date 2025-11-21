@@ -155,9 +155,7 @@ export class StatsCalculator {
       markManagerRef,
       starManagerRef,
       shouldUseStarSystem,
-      currentConversation,
-      processedData,
-      currentFileIndex
+      currentConversation
     } = params;
 
     const markStats = markManagerRef?.current ? markManagerRef.current.getStats() : {

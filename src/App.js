@@ -734,8 +734,7 @@ function App() {
       processedData,
       files,
       currentFileIndex,
-      fileMetadata,
-      starActions: starManagerRef.current
+      fileMetadata
     });
   }, [viewMode, selectedFileIndex, selectedConversationUuid, processedData, files, currentFileIndex, fileMetadata, renameVersion]);
 
