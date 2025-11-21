@@ -327,10 +327,12 @@ export class PDFExportManager {
       title: message.display_text ? message.display_text.substring(0, 50) : ''
     });
 
-    this.renderSender(message, index);
+    this.renderSender(context, message, index);
+    this.updateFromContext(context);
 
     if (this.config.includeTimestamps && message.timestamp) {
-      this.renderTimestamp(message.timestamp);
+      this.renderTimestamp(context, message.timestamp);
+      this.updateFromContext(context);
     }
 
     if (message.thinking && this.config.includeThinking && message.sender !== 'human') {
@@ -339,7 +341,8 @@ export class PDFExportManager {
     }
 
     if (message.display_text) {
-      this.renderBody(message.display_text);
+      this.renderBody(context, message.display_text);
+      this.updateFromContext(context);
     }
 
     if (message.attachments?.length > 0 && message.sender === 'human') {
@@ -370,7 +373,7 @@ export class PDFExportManager {
     this.updateFromContext(context);
   }
 
-  renderSender(message, index) {
+  renderSender(context, message, index) {
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_SENDER);
 
     const color = message.sender === 'human'
@@ -390,26 +393,25 @@ export class PDFExportManager {
 
     const cleanLabel = cleanText(finalLabel);
     if (cleanLabel && cleanLabel.trim().length > 0) {
-      this.pdf.text(cleanLabel, PDF_STYLES.MARGIN_LEFT, this.currentY);
+      this.pdf.text(cleanLabel, PDF_STYLES.MARGIN_LEFT, context.currentY);
     }
 
-    this.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
+    context.currentY += PDF_STYLES.LINE_HEIGHT * 1.2;
   }
 
-  renderTimestamp(timestamp) {
+  renderTimestamp(context, timestamp) {
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_TIMESTAMP);
     this.pdf.setTextColor(...PDF_STYLES.COLOR_TIMESTAMP);
-    this.pdf.text(timestamp, PDF_STYLES.MARGIN_LEFT, this.currentY);
-    this.currentY += PDF_STYLES.LINE_HEIGHT;
+    this.pdf.text(timestamp, PDF_STYLES.MARGIN_LEFT, context.currentY);
+    context.currentY += PDF_STYLES.LINE_HEIGHT;
   }
 
-  renderBody(text) {
+  renderBody(context, text) {
     this.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
     this.pdf.setTextColor(...PDF_STYLES.COLOR_TEXT);
 
     const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
     const parts = parseTextWithCodeBlocks(text);
-    const context = this.getContext();
 
     parts.forEach(part => {
       if (part.type === 'code') {
@@ -421,7 +423,6 @@ export class PDFExportManager {
           checkPageBreak,
           safeGetTextWidth
         );
-        this.updateFromContext(context);
       } else {
         renderMarkdownText(
           context,
@@ -432,11 +433,10 @@ export class PDFExportManager {
           renderInlineSegments,
           parseInlineMarkdown
         );
-        this.updateFromContext(context);
       }
     });
 
-    this.currentY = context.currentY + PDF_STYLES.LINE_HEIGHT;
+    context.currentY += PDF_STYLES.LINE_HEIGHT;
   }
 
   generateFileName(meta) {
