@@ -16,6 +16,37 @@
 import { jsPDF } from 'jspdf';
 import { DateTimeUtils } from '../fileParser';
 import { addChineseFontSupport } from './pdfFontHelper';
+// 导入内容渲染器
+import {
+  renderCodeBlock,
+  parseCodeLineBold,
+  renderMarkdownText,
+  renderThinking,
+  renderArtifact,
+  renderTool,
+  renderCitations,
+  renderAttachments,
+  renderSection,
+  parseTextWithCodeBlocks,
+  parseInlineMarkdown
+} from './pdfContentRenderers';
+// 导入文本和页面助手
+import {
+  cleanText,
+  safeSetFont,
+  safeGetTextWidth,
+  safeRenderText,
+  renderPlainText,
+  applyCJKPunctuationRules,
+  renderInlineSegments,
+  renderSegmentLine,
+  applySegmentStyle,
+  checkPageBreak,
+  renderFooter,
+  addBookmarks,
+  addFooters,
+  renderTOCWithLinks
+} from './pdfTextHelpers';
 
 /**
  * PDF 样式配置（统一常量定义）
@@ -58,39 +89,6 @@ export const PDF_STYLES = {
   PAGE_WIDTH: 210,  // A4 宽度(mm)
   PAGE_HEIGHT: 297, // A4 高度(mm)
 };
-
-// 导入内容渲染器
-import {
-  renderCodeBlock,
-  parseCodeLineBold,
-  renderMarkdownText,
-  renderThinking,
-  renderArtifact,
-  renderTool,
-  renderCitations,
-  renderAttachments,
-  renderSection,
-  parseTextWithCodeBlocks,
-  parseInlineMarkdown
-} from './pdfContentRenderers';
-
-// 导入文本和页面助手
-import {
-  cleanText,
-  safeSetFont,
-  safeGetTextWidth,
-  safeRenderText,
-  renderPlainText,
-  applyCJKPunctuationRules,
-  renderInlineSegments,
-  renderSegmentLine,
-  applySegmentStyle,
-  checkPageBreak,
-  renderFooter,
-  addBookmarks,
-  addFooters,
-  renderTOCWithLinks
-} from './pdfTextHelpers';
 
 /**
  * 获取页面尺寸配置
