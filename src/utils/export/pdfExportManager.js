@@ -19,30 +19,21 @@ import { addChineseFontSupport } from './pdfFontHelper';
 // 导入内容渲染器
 import {
   renderCodeBlock,
-  parseCodeLineBold,
   renderMarkdownText,
   renderThinking,
   renderArtifact,
   renderTool,
   renderCitations,
   renderAttachments,
-  renderSection,
   parseTextWithCodeBlocks,
   parseInlineMarkdown
 } from './pdfContentRenderers';
 // 导入文本和页面助手
 import {
   cleanText,
-  safeSetFont,
   safeGetTextWidth,
-  safeRenderText,
-  renderPlainText,
-  applyCJKPunctuationRules,
   renderInlineSegments,
-  renderSegmentLine,
-  applySegmentStyle,
   checkPageBreak,
-  renderFooter,
   addBookmarks,
   addFooters,
   renderTOCWithLinks
