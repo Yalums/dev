@@ -1,10 +1,9 @@
-﻿// App.js - 大幅简化版本
+// App.js - 大幅简化版本
 import React, { useState, useRef, useEffect, useMemo, useCallback } from 'react';
 import './styles/index.css';
 
 // 组件导入
 import WelcomePage from './components/WelcomePage';
-import MessageDetail from './components/MessageDetail';
 import ConversationTimeline from './components/ConversationTimeline';
 import FullExportCardFilter from './components/FullExportCardFilter';
 import FloatingActionButton from './components/FloatingActionButton';
@@ -30,7 +29,6 @@ import { SortManager } from './utils/data/sortManager';
 import { SearchManager } from './utils/searchManager';
 
 import EnhancedSearchBox from './components/EnhancedSearchBox';
-import { getGlobalSearchManager } from './utils/globalSearchManager';
 import { useI18n } from './index.js';
 import { preloadFont, getFontStatus } from './utils/export/pdfFontHelper';
 
@@ -147,11 +145,12 @@ const useFullExportCardFilter = (conversations = [], operatedUuids = new Set()) 
           const convDate = new Date(conv.created_at);
           const now = new Date();
           switch (filters.dateRange) {
-            case 'today':
+            case 'today': {
               const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
               const convDay = new Date(convDate.getFullYear(), convDate.getMonth(), convDate.getDate());
               if (convDay.getTime() !== today.getTime()) return false;
               break;
+            }
             case 'week':
               const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
               if (convDate < weekAgo) return false;
