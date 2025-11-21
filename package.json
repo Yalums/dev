@@ -24,12 +24,12 @@
     "remark-math": "^6.0.0"
   },
   "scripts": {
-    "start": "cross-env HOST=0.0.0.0 PORT=3789 PUBLIC_URL=/lyra-exporter react-scripts start",
+    "start": "cross-env HOST=0.0.0.0 PORT=3789 PUBLIC_URL=/dev react-scripts start",
     "start:local": "cross-env PORT=3789 react-scripts start",
     "start:network": "cross-env HOST=0.0.0.0 PORT=3789 react-scripts start",
-    "build": "react-scripts build",
+    "build": "cross-env BUILD_PATH='./docs' react-scripts build",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build",
+    "deploy": "gh-pages -d docs",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
     "tauri:build": "tauri build"
