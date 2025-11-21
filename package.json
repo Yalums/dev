@@ -42,7 +42,10 @@
       "no-unused-vars": "off",
       "default-case": "off",
       "no-loop-func": "off",
-      "react-hooks/exhaustive-deps": "off"
+      "react-hooks/exhaustive-deps": "off",
+      "no-control-regex": "off",
+      "no-whitespace-before-property": "off",
+      "no-useless-escape": "off"
     }
   },
   "browserslist": {
