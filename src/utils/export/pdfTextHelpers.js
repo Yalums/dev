@@ -25,6 +25,7 @@ export function cleanText(text) {
     let cleaned = text.normalize('NFC');
 
     // 2. 移除控制字符和不可打印字符（保留换行符和制表符）
+    // eslint-disable-next-line no-control-regex
     cleaned = cleaned.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F]/g, '');
 
     // 3. 处理常见的Latin连字（ligatures），将其转换回普通字符组合
@@ -117,6 +118,7 @@ export function cleanText(text) {
   } catch (error) {
     console.error('[PDF导出] 文本清理失败:', error);
     // 如果清理失败，返回简化处理的文本
+    // eslint-disable-next-line no-control-regex
     return text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
   }
 }
@@ -323,7 +325,7 @@ export function applyCJKPunctuationRules(context, lines) {
   if (!lines || lines.length <= 1) return lines;
 
   // 不能出现在行首的标点（避头）
-  const noLineStart = /^[。，、；：！？）》」』】"',.;:!?)}\]]/;
+  const noLineStart = /^[。，、；：！？）》」』】"',.;:!?)}】]]/;
   // 不能出现在行尾的标点（避尾）
   const noLineEnd = /[（《「『【"'(\[{]$/;
 
@@ -366,7 +368,6 @@ export function applyCJKPunctuationRules(context, lines) {
  */
 export function renderInlineSegments(context, segments, maxWidth) {
   let currentX = PDF_STYLES.MARGIN_LEFT;
-  let currentLineText = '';
   let currentLineSegments = [];
 
   segments.forEach((segment, idx) => {
@@ -718,7 +719,6 @@ export function renderTOCWithLinks(context, tocPage, messages) {
 
   // 渲染消息列表
   context.pdf.setFontSize(PDF_STYLES.FONT_SIZE_BODY);
-  const maxWidth = PDF_STYLES.PAGE_WIDTH - PDF_STYLES.MARGIN_LEFT - PDF_STYLES.MARGIN_RIGHT;
 
   context.messageAnchors.forEach((anchor, idx) => {
     const message = messages[idx];

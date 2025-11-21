@@ -83,7 +83,6 @@ export function renderCodeBlock(context, code, language = '', cleanText, checkPa
   // 逐行渲染，遇到需要换页时自动换页
   const blockStartY = context.currentY;
   const blockStartPage = pdf.internal.getCurrentPageInfo().pageNumber;
-  let isFirstLine = true;
 
   // 先绘制第一页的背景和边框起始部分
   const firstPageHeight = Math.min(
@@ -139,8 +138,6 @@ export function renderCodeBlock(context, code, language = '', cleanText, checkPa
         newPageHeight,
         'F'
       );
-
-      isFirstLine = false;
     }
 
     // 渲染行号
